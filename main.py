@@ -46,7 +46,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except (OSError, ImportError) as _sd_err:
+    sd = None
+    print(f"[Warning] sounddevice not available ({_sd_err}). Running in headless/silent mode.")
 import numpy as np
 from google import genai
 from google.genai import types
@@ -2104,6 +2108,8 @@ class JarvisLive:
             category = args.get("category", "notes")
             key      = args.get("key", "")
             value    = args.get("value", "")
+            if key == "language" and any(w in str(value).lower() for w in ("spanish", "portuguese", "french", "espanol")):
+                value = "Hinglish (Hindi + English)"
             if key and value:
                 update_memory({category: {key: {"value": value}}})
                 firebase_sync.train_important_memory(key, value, category=category, importance=0.92)
@@ -2506,6 +2512,11 @@ class JarvisLive:
                     except Exception:
                         pass
 
+        if sd is None:
+            print("[JARVIS] ⚠️ sounddevice not available. Mic disabled.")
+            while True:
+                await asyncio.sleep(1)
+
         try:
             def _open_mic(dev):
                 return sd.InputStream(
@@ -2825,6 +2836,9 @@ class JarvisLive:
             raise
 
     async def _play_audio(self):
+        if sd is None:
+            while True:
+                await asyncio.sleep(1)
         print("[JARVIS] 🔊 Play started")
 
         _spk_name = get_output_device()
@@ -2981,7 +2995,18 @@ class JarvisLive:
             e = identity.get(k, {})
             return (e.get("value", "") if isinstance(e, dict) else str(e)).strip()
 
-        lang = _val("language")
+        lang_pref = get_reply_language()
+        if lang_pref == "hinglish":
+            lang = "natural Hinglish (Hindi + conversational English words)"
+        elif lang_pref == "hindi":
+            lang = "Hindi"
+        elif lang_pref == "english":
+            lang = "English"
+        else:
+            lang = _val("language")
+            if not lang or any(w in lang.lower() for w in ("spanish", "portuguese", "french", "espanol")):
+                lang = "natural Hinglish (Hindi + conversational English words)"
+
         name = _val("name")
         time_str = datetime.now().strftime("%H:%M")
 
@@ -2997,7 +3022,7 @@ class JarvisLive:
         # The briefing fires before the user has said anything, so the
         # remembered language is the only signal there is. It is a starting
         # point, not a setting: the moment they reply, their language wins.
-        lang_clause = (f" Speak this greeting in {lang}, then follow the "
+        lang_clause = (f" Speak this greeting strictly in {lang}. NEVER speak Spanish, Portuguese, or French, then follow the "
                        f"user's own language from their first reply onward."
                        if lang else "")
         name_clause = f" Address the user as {name}." if name else ""
@@ -3109,9 +3134,16 @@ class JarvisLive:
         self._session_log = []    # reset immediately so the next session starts clean
 
         memory = load_memory()
-        lang_entry = memory.get("identity", {}).get("language", {})
-        lang = (lang_entry.get("value", "") if isinstance(lang_entry, dict) else str(lang_entry)).strip()
-        lang = lang or "English"
+        pref_lang = get_reply_language()
+        if pref_lang == "hinglish":
+            lang = "natural Hinglish (Hindi + English)"
+        elif pref_lang == "hindi":
+            lang = "Hindi"
+        else:
+            lang_entry = memory.get("identity", {}).get("language", {})
+            lang = (lang_entry.get("value", "") if isinstance(lang_entry, dict) else str(lang_entry)).strip()
+            if not lang or any(w in lang.lower() for w in ("spanish", "portuguese", "french", "espanol")):
+                lang = "natural Hinglish (Hindi + English)"
 
         convo = "\n".join(log[-40:])   # cap at last 40 turns to stay within token budget
         prompt = (
