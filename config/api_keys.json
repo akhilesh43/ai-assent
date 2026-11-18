@@ -1,0 +1,55 @@
+{
+    "os_system": "windows",
+    "gemini_api_key": "AQ.Ab8RN6JGvV4RmhxD6eaa3-yGs40WOHrxIXDakeaEX8zopfZGaw",
+    "engine_auto": true,
+    "engine_auto_prefer": "speed",
+    "providers": {
+        "mode": "gemini",
+        "creds": {
+            "openai_compat@custom": {
+                "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                "api_key": "AQ.Ab8RN6JGvV4RmhxD6eaa3-yGs40WOHrxIXDakeaEX8zopfZGaw",
+                "model": "gemini-2.5-flash"
+            },
+            "whisper@local": {
+                "backend": "local",
+                "model": "small",
+                "base_url": "",
+                "api_key": ""
+            },
+            "failover_llm": {
+                "chain": "openai_compat@custom"
+            },
+            "failover_stt": {
+                "chain": "whisper@local"
+            },
+            "failover_tts": {
+                "chain": "piper,system_tts"
+            }
+        },
+        "sidecar": "",
+        "sidecar_first": false
+    },
+    "image_gen": {
+        "backends": [
+            "gemini",
+            "pollinations"
+        ]
+    },
+    "engine_auto_sig": "5b72f9de3d2c85f540bc0d687965807f5ebc83dc",
+    "engine_auto_applied": {
+        "mode": "gemini",
+        "pipeline": null
+    },
+    "firebase_rtdb_url": "",
+    "hud_style": "core",
+    "screen_watch_enabled": true,
+    "listening_mode": "voice_lock",
+    "voice_isolation_enabled": true,
+    "camera_index": 0,
+    "reply_language": "hinglish",
+    "voice_end_silence_ms": 400,
+    "voice_isolation_threshold": 0.52,
+    "voice_barge_in_enabled": true,
+    "morning_brief_enabled": false
+}

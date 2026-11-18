@@ -1,0 +1,30 @@
+{
+  "gemini_api_key": "PASTE_YOUR_GEMINI_KEY_HERE",
+  "listening_mode": "local_ear",
+  "local_ear": {
+    "speed": "accurate",
+    "model": "small",
+    "device": "auto",
+    "language": "",
+    "denoise": 0.5,
+    "media_wake": true
+  },
+  "image_gen": {
+    "backends": [
+      "gemini",
+      "pollinations"
+    ],
+    "gemini_models": [
+      "gemini-3.1-flash-image",
+      "gemini-2.5-flash-image",
+      "gemini-3-pro-image-preview"
+    ],
+    "pollinations_key": "",
+    "translate": true
+  },
+  "holo_fx": true,
+  "screen_skills": {
+    "cloud_assist": true
+  },
+  "firebase_rtdb_url": ""
+}
