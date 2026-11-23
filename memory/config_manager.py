@@ -36,13 +36,24 @@ def save_api_keys(gemini_api_key: str) -> None:
     )
 
 def load_api_keys() -> dict:
-    if not CONFIG_FILE.exists():
-        return {}
-    try:
-        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    except Exception as e:
-        print(f"❌ Failed to load api_keys.json: {e}")
-        return {}
+    data = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"❌ Failed to load api_keys.json: {e}")
+    
+    # Cloud Deployment / Environment Variable fallback (Render, Docker, etc.)
+    import os
+    env_gemini = os.environ.get("GEMINI_API_KEY") or os.environ.get("gemini_api_key")
+    if env_gemini and not data.get("gemini_api_key"):
+        data["gemini_api_key"] = env_gemini.strip()
+        
+    env_el = os.environ.get("ELEVENLABS_API_KEY") or os.environ.get("elevenlabs_api_key")
+    if env_el and not data.get("elevenlabs_api_key"):
+        data["elevenlabs_api_key"] = env_el.strip()
+
+    return data
 
 def get_gemini_key() -> str | None:
     return load_api_keys().get("gemini_api_key")
