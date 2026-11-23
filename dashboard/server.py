@@ -920,22 +920,46 @@ class DashboardServer:
                 dead.add(ws)
         self._clients -= dead
 
-    async def _process_cloud_command(self, text: str) -> None:
+    def _call_gemini_models(self, prompt: str, key: str) -> str:
+        """Query official Gemini models in sequence with graceful fallback."""
+        from google import genai
+        cl = genai.Client(api_key=key)
+        models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash", "gemini-1.5-pro"]
+        last_exc = None
+        system_instruction = (
+            "You are JARVIS / FRIDAY, a highly intelligent, charismatic, and loyal AI assistant. "
+            "Respond helpfully, concisely, and naturally in the same language as the user (Hindi, Hinglish, or English)."
+        )
+        for m in models:
+            try:
+                resp = cl.models.generate_content(
+                    model=m,
+                    contents=f"{system_instruction}\n\nUser: {prompt}"
+                )
+                if resp and resp.text and resp.text.strip():
+                    return resp.text.strip()
+            except Exception as e:
+                last_exc = e
+                continue
+        raise RuntimeError(f"All Gemini models failed: {last_exc}")
+
+    async def _reset_avatar_after(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+        await self.broadcast({"type": "state", "state": "listening"})
+
+    async def _process_cloud_command(self, text: str) -> str:
         """Handle command directly when running in headless / cloud mode without desktop GUI."""
         try:
             await self.broadcast({"type": "state", "state": "thinking"})
-            reply = ""
             from core import gemini
             k = gemini.api_key()
             if not k:
                 reply = "⚠️ Google Gemini API key configure nahi hai! Kripya Settings Drawer -> 'Advanced AI Config' me jakar apna Gemini API key enter karein ya Render ke Environment Variables me 'GEMINI_API_KEY' set karein."
             else:
-                try:
-                    reply = await asyncio.to_thread(gemini.text, text)
-                except Exception as e:
-                    reply = f"AI Error: {e}"
+                reply = await asyncio.to_thread(self._call_gemini_models, text, k)
+
             if not reply:
-                reply = f"Acknowledged: '{text}'."
+                reply = f"JARVIS Cloud Engine: Received directive '{text}'."
 
             await self.broadcast({"type": "state", "state": "talking"})
             await self.broadcast({
@@ -944,12 +968,13 @@ class DashboardServer:
                 "text": reply,
                 "ts": time.strftime("%H:%M:%S")
             })
-            # Hold talking state briefly proportional to message length, then return to listening
-            await asyncio.sleep(max(1.5, min(len(reply) * 0.05, 5.0)))
-            await self.broadcast({"type": "state", "state": "listening"})
+            asyncio.create_task(self._reset_avatar_after(max(2.0, min(len(reply) * 0.05, 6.0))))
+            return reply
         except Exception as exc:
-            await self.broadcast({"type": "log", "speaker": "sys", "text": f"Error: {exc}", "ts": time.strftime("%H:%M:%S")})
+            err_msg = f"AI Error: {exc}"
+            await self.broadcast({"type": "log", "speaker": "sys", "text": err_msg, "ts": time.strftime("%H:%M:%S")})
             await self.broadcast({"type": "state", "state": "listening"})
+            return err_msg
 
     # ── FastAPI app ───────────────────────────────────────────────────────
 
@@ -1039,8 +1064,20 @@ class DashboardServer:
             if not p.exists():
                 p = STATIC_DIR / safe
             if not p.exists() or not p.is_file():
-                return JSONResponse({"error": "Video not found"}, status_code=404)
-            return FileResponse(str(p), media_type="video/mp4")
+                return JSONResponse({"error": "File not found"}, status_code=404)
+            ext = p.suffix.lower()
+            mime = "image/webp" if ext == ".webp" else ("image/png" if ext == ".png" else ("image/jpeg" if ext in (".jpg", ".jpeg") else "video/mp4"))
+            return FileResponse(str(p), media_type=mime)
+
+        @app.get("/{filename}.webp")
+        async def get_root_webp(filename: str):
+            safe = re.sub(r'[/\\]', '', filename) + ".webp"
+            p = STATIC_DIR / "videos" / safe
+            if not p.exists():
+                p = STATIC_DIR / safe
+            if not p.exists() or not p.is_file():
+                return JSONResponse({"error": "File not found"}, status_code=404)
+            return FileResponse(str(p), media_type="image/webp")
 
         @app.get("/{filename}.mp4")
         async def get_root_video(filename: str):
@@ -1235,6 +1272,7 @@ class DashboardServer:
                     return JSONResponse({"error": "Decryption failed"}, status_code=400)
             else:
                 text = (body.get("text") or "").strip()
+            reply = ""
             if text:
                 await self.broadcast({
                     "type": "log",
@@ -1246,8 +1284,8 @@ class DashboardServer:
                 if self._wake_callback:
                     self._wake_callback()
                 else:
-                    asyncio.create_task(self._process_cloud_command(text))
-            return JSONResponse({"ok": True})
+                    reply = await self._process_cloud_command(text)
+            return JSONResponse({"ok": True, "reply": reply or ""})
 
         @app.post("/api/wake")
         async def wake_ep(req: Request):
