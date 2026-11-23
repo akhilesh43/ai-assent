@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 import secrets
 import socket
 import threading
@@ -183,6 +184,92 @@ class PhoneLinkServer:
 
             def _go(self, method: str) -> None:
                 u = urlparse(self.path)
+                if method == "GET" and (u.path in ("/dashboard", "/dashboard/", "/hud", "/hud/")):
+                    try:
+                        hud_file = Path(__file__).resolve().parent.parent / "dashboard" / "static" / "hud_dashboard.html"
+                        if hud_file.exists():
+                            return self._send(200, hud_file.read_text(encoding="utf-8"), content_type="text/html; charset=utf-8")
+                    except Exception as e:
+                        return self._send(500, {"ok": False, "error": str(e)})
+
+                if method == "GET" and (u.path.endswith(".mp4") or "/videos/" in u.path):
+                    try:
+                        vname = Path(u.path).name
+                        v_file = Path(__file__).resolve().parent.parent / "dashboard" / "static" / "videos" / vname
+                        if not v_file.exists():
+                            v_file = Path(__file__).resolve().parent.parent / "dashboard" / "static" / vname
+                        if v_file.exists():
+                            data = v_file.read_bytes()
+                            self.send_response(200)
+                            self.send_header("Content-Type", "video/mp4")
+                            self.send_header("Content-Length", str(len(data)))
+                            self.send_header("Accept-Ranges", "bytes")
+                            self.end_headers()
+                            self.wfile.write(data)
+                            return
+                    except Exception:
+                        pass
+
+                if method == "GET" and (u.path == "/remote" or u.path == "/remote/"):
+                    try:
+                        from core.remote_desktop import get_remote_html
+                        return self._send(200, get_remote_html(), content_type="text/html; charset=utf-8")
+                    except Exception as e:
+                        return self._send(500, {"ok": False, "error": str(e)})
+
+                if method == "GET" and (u.path == "/remote/stream" or u.path == "/remote/stream/"):
+                    try:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                        self.send_header("Pragma", "no-cache")
+                        self.send_header("Connection", "close")
+                        self.end_headers()
+                        from core.remote_desktop import stream_mjpeg
+                        return stream_mjpeg(self.wfile)
+                    except Exception:
+                        return
+
+                if method == "GET" and (u.path == "/remote/audio" or u.path == "/remote/audio/"):
+                    try:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "audio/wav")
+                        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                        self.send_header("Pragma", "no-cache")
+                        self.send_header("Connection", "close")
+                        self.end_headers()
+                        from core.remote_desktop import stream_mic_audio
+                        return stream_mic_audio(self.wfile)
+                    except Exception:
+                        return
+
+                if method == "GET" and (u.path == "/remote/cam" or u.path == "/remote/cam/"):
+                    try:
+                        from core.remote_desktop import get_webcam_snapshot
+                        data = get_webcam_snapshot()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "image/jpeg")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
+                    except Exception:
+                        return
+
+                if method == "GET" and (u.path == "/remote/cam/stream" or u.path == "/remote/cam/stream/"):
+                    try:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                        self.send_header("Pragma", "no-cache")
+                        self.send_header("Connection", "close")
+                        self.end_headers()
+                        from core.remote_desktop import stream_webcam_mjpeg
+                        return stream_webcam_mjpeg(self.wfile)
+                    except Exception:
+                        return
+
                 body: dict = {}
                 if method == "POST":
                     n = int(self.headers.get("Content-Length") or 0)
@@ -199,17 +286,31 @@ class PhoneLinkServer:
                                           body, self.headers.get("Authorization", ""), self.client_address[0])
                 self._send(code, data)
 
-            def _send(self, code: int, data: Any) -> None:
-                raw = json.dumps(data, default=str).encode("utf-8")
+            def _send(self, code: int, data: Any, content_type: str = "application/json; charset=utf-8") -> None:
+                if isinstance(data, str) and content_type.startswith("text/html"):
+                    raw = data.encode("utf-8")
+                else:
+                    raw = json.dumps(data, default=str).encode("utf-8")
                 self.send_response(code)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(raw)))
                 self.send_header("Cache-Control", "no-store")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "*")
                 self.end_headers()
                 try:
                     self.wfile.write(raw)
                 except Exception:
                     pass
+
+            def do_OPTIONS(self):
+                self.send_response(200)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "*")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
             def do_GET(self):
                 self._go("GET")
@@ -351,6 +452,30 @@ class PhoneLinkServer:
         if method == "GET" and path == "/api/ping":
             return 200, {"jarvis": True, "link": 1, "build": BUILD, "name": socket.gethostname(), "ips": self._ips()}
 
+        # ── WebRTC Remote Desktop ──────────────────────────────────────────
+        if method == "POST" and path == "/api/remote/offer":
+            try:
+                from core.remote_desktop import RemoteDesktopServer
+                res = RemoteDesktopServer.get().handle_offer(body)
+                return 200, res
+            except Exception as e:
+                return 500, {"ok": False, "error": str(e)}
+
+        if method == "POST" and path == "/api/remote/control":
+            try:
+                from core.remote_desktop import execute_remote_action
+                res = execute_remote_action(body)
+                return 200, res
+            except Exception as e:
+                return 500, {"ok": False, "error": str(e)}
+
+        if method == "GET" and path == "/api/remote/who":
+            try:
+                from core.remote_desktop import get_user_activity_status
+                return 200, get_user_activity_status()
+            except Exception as e:
+                return 500, {"ok": False, "error": str(e)}
+
         # ── pairing ──────────────────────────────────────────────────────────
         if method == "POST" and path == "/api/app-pair":
             wait = self._locked_out(who)
@@ -381,10 +506,73 @@ class PhoneLinkServer:
             rec = phone_devices.verify(str(body.get("device_token") or ""), self._devices_path)
             if not rec:
                 return 401, {"ok": False}
-            return 200, {"ok": True, "token": self._issue_token(), "device_id": rec["id"]}
+            dev_id = rec["id"]
+            dev_name = str(rec.get("name") or body.get("name") or "Phone")
+            b.register(dev_id, dev_name)
+            cb = self._connect_callback
+            if cb:
+                try:
+                    cb()
+                except Exception:
+                    pass
+            return 200, {"ok": True, "token": self._issue_token(), "device_id": dev_id}
 
-        # ── everything else needs a session token ────────────────────────────
-        if not self._authed(auth):
+        # ── AI Assistants endpoints (Dashboard & Phone app, always accessible) ──
+        if method == "GET" and path == "/api/assistants":
+            try:
+                from core import assistants_manager
+                return 200, {
+                    "ok": True,
+                    "assistants": assistants_manager.list_assistants(),
+                    "active": assistants_manager.get_active_assistant()
+                }
+            except Exception as _ae:
+                return 500, {"ok": False, "error": str(_ae)}
+
+        if method == "POST" and path == "/api/assistants/switch":
+            try:
+                from core import assistants_manager
+                target = str(body.get("name") or body.get("id") or "").strip()
+                ok, msg, asst = assistants_manager.switch_assistant(target)
+                if ok:
+                    try:
+                        from core.tts import speak
+                        speak(msg, wait=False)
+                    except Exception:
+                        pass
+                return (200 if ok else 400), {"ok": ok, "message": msg, "assistant": asst}
+            except Exception as _ae:
+                return 500, {"ok": False, "error": str(_ae)}
+
+        if method == "POST" and path == "/api/assistants/create":
+            try:
+                from core import assistants_manager
+                ok, msg, asst = assistants_manager.create_assistant(body)
+                return (200 if ok else 400), {"ok": ok, "message": msg, "assistant": asst}
+            except Exception as _ae:
+                return 500, {"ok": False, "error": str(_ae)}
+
+        if method == "POST" and path == "/api/assistants/delete":
+            try:
+                from core import assistants_manager
+                aid = str(body.get("id") or body.get("name") or "").strip()
+                ok, msg = assistants_manager.delete_assistant(aid)
+                return (200 if ok else 400), {"ok": ok, "message": msg}
+            except Exception as _ae:
+                return 500, {"ok": False, "error": str(_ae)}
+
+        if method == "POST" and path == "/api/voice/test":
+            try:
+                from core.tts import speak
+                txt = str(body.get("text") or "Hello sir! Systems operational.")
+                speak(txt, wait=False)
+                return 200, {"ok": True, "voice": body.get("voice", "ElevenLabs")}
+            except Exception as _ae:
+                return 500, {"ok": False, "error": str(_ae)}
+
+        # ── everything else needs a session token (or loopback / verified device) ──
+        is_local = who in ("127.0.0.1", "::1", "localhost") or not who
+        if not is_local and not self._authed(auth):
             return 401, {"error": "Unauthorized"}
 
         if method == "GET" and path == "/api/phone/poll":
@@ -392,11 +580,21 @@ class PhoneLinkServer:
                 wait = min(max(float(q.get("wait", 25)), 0.0), 30.0)
             except ValueError:
                 wait = 25.0
-            return 200, {"commands": b.poll(q.get("device") or "phone", wait, q.get("name", ""))}
+            dev = q.get("device") or "phone"
+            name = q.get("name", "")
+            b.register(dev, name)
+            cb = self._connect_callback
+            if cb:
+                try:
+                    cb()
+                except Exception:
+                    pass
+            return 200, {"commands": b.poll(dev, wait, name)}
         if method == "GET" and path == "/api/phone/state":
             return 200, b.snapshot()
         if method == "POST" and path == "/api/phone/event":
             dev = str(body.get("device") or "phone")
+            b.register(dev)
             for ev in (body.get("events") or [])[:50]:
                 if isinstance(ev, dict):
                     b.push_event(dev, ev)

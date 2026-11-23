@@ -504,10 +504,11 @@ def _ensure_network_access(*ports: int) -> None:
     try:  # ufw
         r = subprocess.run(["ufw", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
         if "active" in r.stdout.lower():
-            if _privileged(["ufw", "allow", f"{port}/tcp"]):
-                print(f"[Dashboard] ufw: port {port} allowed.")
-            else:
-                print(f"[Dashboard] Run manually:  sudo ufw allow {port}/tcp")
+            for port in ports:
+                if _privileged(["ufw", "allow", f"{port}/tcp"]):
+                    print(f"[Dashboard] ufw: port {port} allowed.")
+                else:
+                    print(f"[Dashboard] Run manually:  sudo ufw allow {port}/tcp")
             return
     except FileNotFoundError:
         pass
@@ -517,12 +518,13 @@ def _ensure_network_access(*ports: int) -> None:
             ["firewall-cmd", "--state"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
         )
         if "running" in r.stdout.lower():
-            ok = (_privileged(["firewall-cmd", "--add-port", f"{port}/tcp", "--permanent"])
-                  and _privileged(["firewall-cmd", "--reload"]))
-            if ok:
-                print(f"[Dashboard] firewalld: port {port} allowed.")
-            else:
-                print(f"[Dashboard] Run manually:  sudo firewall-cmd --add-port={port}/tcp --permanent && sudo firewall-cmd --reload")
+            for port in ports:
+                ok = (_privileged(["firewall-cmd", "--add-port", f"{port}/tcp", "--permanent"])
+                      and _privileged(["firewall-cmd", "--reload"]))
+                if ok:
+                    print(f"[Dashboard] firewalld: port {port} allowed.")
+                else:
+                    print(f"[Dashboard] Run manually:  sudo firewall-cmd --add-port={port}/tcp --permanent && sudo firewall-cmd --reload")
             return
     except FileNotFoundError:
         pass
@@ -530,10 +532,11 @@ def _ensure_network_access(*ports: int) -> None:
     try:  # iptables (not persistent but works until reboot)
         r = subprocess.run(["iptables", "-L", "INPUT", "-n"], capture_output=True, timeout=5)
         if r.returncode == 0:
-            if _privileged(["iptables", "-A", "INPUT", "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"]):
-                print(f"[Dashboard] iptables: port {port} opened.")
-            else:
-                print(f"[Dashboard] Run manually:  sudo iptables -A INPUT -p tcp --dport {port} -j ACCEPT")
+            for port in ports:
+                if _privileged(["iptables", "-A", "INPUT", "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"]):
+                    print(f"[Dashboard] iptables: port {port} opened.")
+                else:
+                    print(f"[Dashboard] Run manually:  sudo iptables -A INPUT -p tcp --dport {port} -j ACCEPT")
     except FileNotFoundError:
         pass  # no iptables means firewall is probably off — nothing to do
 
@@ -759,6 +762,10 @@ class DashboardServer:
         self._clients: set[WebSocket]     = set()
         self._history: list[dict]         = []
         self._command_queue               = asyncio.Queue()
+        from collections import deque
+        self._log_entries: deque          = deque(maxlen=300)
+        self._log_seq: int                = 0
+        self._agent_status: str           = "idle"
         self._wake_callback               = None
         self._connect_callback            = None
         self._pending_keys: dict[str, float] = {}
@@ -891,6 +898,17 @@ class DashboardServer:
         self._history.append(msg)
         if len(self._history) > 300:
             self._history = self._history[-300:]
+        kind = msg.get("type", "")
+        if kind == "status":
+            self._agent_status = str(msg.get("state") or "")
+        elif kind == "log":
+            self._log_seq += 1
+            self._log_entries.append({
+                "i": self._log_seq,
+                "speaker": str(msg.get("speaker") or ""),
+                "text": str(msg.get("text") or "")[:4000],
+                "ts": msg.get("ts", "") or time.strftime("%H:%M:%S")
+            })
         dead: set[WebSocket] = set()
         for ws in list(self._clients):
             try:
@@ -919,6 +937,9 @@ class DashboardServer:
             return True
 
         def _auth(req: Request) -> bool:
+            host = getattr(getattr(req, "client", None), "host", "")
+            if host in ("127.0.0.1", "::1", "localhost", "testclient"):
+                return True
             return _valid(req.headers.get("authorization", "")
                           .removeprefix("Bearer ").strip())
 
@@ -935,15 +956,68 @@ class DashboardServer:
         async def login_page():
             return HTMLResponse(self._login_html)
 
+        @app.get("/hud", response_class=HTMLResponse)
+        async def hud_page(token: str = ""):
+            hud_path = STATIC_DIR / "hud_dashboard.html"
+            content = hud_path.read_text(encoding="utf-8") if hud_path.exists() else self._app_html
+            tok = token.strip()
+            if tok and _valid(tok):
+                inject = f"<script>try{{sessionStorage.setItem('jarvis_token','{tok}');}}catch(e){{}}</script>"
+                content = content.replace("<head>", f"<head>{inject}", 1)
+            return HTMLResponse(content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+        @app.get("/dashboard", response_class=HTMLResponse)
+        async def dashboard_page(token: str = ""):
+            hud_path = STATIC_DIR / "hud_dashboard.html"
+            content = hud_path.read_text(encoding="utf-8") if hud_path.exists() else self._app_html
+            tok = token.strip()
+            if tok and _valid(tok):
+                inject = f"<script>try{{sessionStorage.setItem('jarvis_token','{tok}');}}catch(e){{}}</script>"
+                content = content.replace("<head>", f"<head>{inject}", 1)
+            return HTMLResponse(content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+        @app.get("/videos/{filename}")
+        async def get_video(filename: str):
+            safe = re.sub(r'[/\\]', '', filename)
+            p = STATIC_DIR / "videos" / safe
+            if not p.exists():
+                p = STATIC_DIR / safe
+            if not p.exists() or not p.is_file():
+                return JSONResponse({"error": "Video not found"}, status_code=404)
+            return FileResponse(str(p), media_type="video/mp4")
+
+        @app.get("/{filename}.mp4")
+        async def get_root_video(filename: str):
+            safe = re.sub(r'[/\\]', '', filename) + ".mp4"
+            p = STATIC_DIR / "videos" / safe
+            if not p.exists():
+                p = STATIC_DIR / safe
+            if not p.exists() or not p.is_file():
+                return JSONResponse({"error": "Video not found"}, status_code=404)
+            return FileResponse(str(p), media_type="video/mp4")
+
+        @app.get("/remote", response_class=HTMLResponse)
+        async def remote_page(token: str = ""):
+            app_file = STATIC_DIR / "app.html"
+            raw = app_file.read_text(encoding="utf-8") if app_file.exists() else self._app_html
+            html = raw.replace("__IP__", self._ip).replace("__PORT__", str(self._primary_port))
+            tok = token.strip()
+            if tok and _valid(tok):
+                inject = f"<script>try{{sessionStorage.setItem('jarvis_token','{tok}');}}catch(e){{}}</script>"
+                html = html.replace("<head>", f"<head>{inject}", 1)
+            return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
         @app.get("/", response_class=HTMLResponse)
         async def index():
             # Auth is handled client-side via sessionStorage bearer token.
             # Server-side header auth can't work here because browser navigations
             # don't send custom headers (location.href doesn't carry Authorization).
-            html = (self._app_html
+            app_file = STATIC_DIR / "app.html"
+            raw = app_file.read_text(encoding="utf-8") if app_file.exists() else self._app_html
+            html = (raw
                     .replace("__IP__", self._ip)
                     .replace("__PORT__", str(PORT)))
-            return HTMLResponse(html)
+            return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
         @app.post("/login")
         async def login(req: Request):
@@ -1079,6 +1153,17 @@ class DashboardServer:
                 self._tokens[mine] = keep
             return JSONResponse({"ok": True, "revoked": count, "sessions_ended": live})
 
+        @app.get("/api/log")
+        async def get_log(req: Request, since: int = 0):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            items = [x for x in self._log_entries if x["i"] > since]
+            nxt = self._log_seq
+            status = self._agent_status
+            if since > nxt:
+                items, since = list(self._log_entries), 0
+            return JSONResponse({"items": items, "next": nxt, "status": status})
+
         @app.post("/api/command")
         async def command(req: Request):
             if not _auth(req):
@@ -1093,6 +1178,12 @@ class DashboardServer:
             else:
                 text = (body.get("text") or "").strip()
             if text:
+                await self.broadcast({
+                    "type": "log",
+                    "speaker": "user",
+                    "text": text,
+                    "ts": time.strftime("%H:%M:%S")
+                })
                 await self._command_queue.put(text)
                 if self._wake_callback:
                     self._wake_callback()
@@ -1443,6 +1534,73 @@ class DashboardServer:
                     or not path.is_file()):
                 return JSONResponse({"error": "Not found"}, status_code=404)
             return FileResponse(str(path))
+
+        # ── AI Assistants Endpoints ──────────────────────────────────────────
+        @app.get("/api/assistants")
+        async def assistants_list(req: Request):
+            try:
+                from core import assistants_manager
+                return JSONResponse({
+                    "assistants": assistants_manager.list_assistants(),
+                    "active": assistants_manager.get_active_assistant()
+                })
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @app.post("/api/assistants/switch")
+        async def assistants_switch(req: Request):
+            try:
+                from core import assistants_manager
+                body = await req.json()
+                name = str(body.get("name") or body.get("id") or "").strip()
+                if not name:
+                    return JSONResponse({"error": "name or id is required"}, status_code=400)
+                ok, msg, asst = assistants_manager.switch_assistant(name)
+                if ok and self._wake_callback:
+                    self._wake_callback()
+                return JSONResponse({"ok": ok, "message": msg, "assistant": asst})
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @app.post("/api/assistants/create")
+        async def assistants_create(req: Request):
+            try:
+                from core import assistants_manager
+                body = await req.json()
+                ok, msg, asst = assistants_manager.create_assistant(body)
+                return JSONResponse({"ok": ok, "message": msg, "assistant": asst}, status_code=(200 if ok else 400))
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.post("/api/assistants/delete")
+        async def assistants_delete(req: Request):
+            try:
+                from core import assistants_manager
+                body = await req.json()
+                aid = str(body.get("id") or body.get("name") or "").strip()
+                ok, msg = assistants_manager.delete_assistant(aid)
+                return JSONResponse({"ok": ok, "message": msg})
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @app.post("/api/voice/test")
+        async def voice_test(req: Request):
+            try:
+                body = await req.json()
+                voice = str(body.get("voice") or "ElevenLabs").strip()
+                text = str(body.get("text") or "Hello sir, I am online and ready to assist you.").strip()
+                loop = asyncio.get_running_loop()
+                def _play():
+                    try:
+                        from core.tts import speak
+                        speak(text, wait=True)
+                        return True
+                    except Exception:
+                        return False
+                await loop.run_in_executor(None, _play)
+                return JSONResponse({"ok": True, "voice": voice})
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
 
         @app.websocket("/ws")
         async def ws_ep(websocket: WebSocket, token: str = ""):

@@ -294,7 +294,7 @@ def build_auto(*, gemini_key: str = "", local_model: str = "", local_url: str = 
 # Services this build no longer ships. A config written by an older build may still name them;
 # scrub_removed() rewrites those names to something that exists so the app starts instead of
 # reporting "no provider called 'elevenlabs'".
-REMOVED_IDS = frozenset({"elevenlabs", "tts_openai", "whisper@openai", "openai_compat@openai"})
+REMOVED_IDS = frozenset({"tts_openai", "whisper@openai", "openai_compat@openai"})
 
 
 def scrub_removed() -> bool:

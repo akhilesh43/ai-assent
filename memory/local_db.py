@@ -229,6 +229,8 @@ def save_fact(key: str, value: str, category: str = "general", confidence: float
     cat = (category or "general").strip().lower()[:40]
     if not k or not v:
         return
+    if "account" in k or "cuenta" in k or "account" in v.lower() or "cuenta" in v.lower():
+        return
     with _LOCK:
         conn = _connect()
         try:
@@ -279,6 +281,8 @@ def learn_from_text(text: str) -> list[tuple[str, str]]:
 def record_turn(role: str, text: str, emotion: str = "neutral") -> None:
     txt = (text or "").strip()
     if not txt:
+        return
+    if "account" in txt.lower() or "cuenta" in txt.lower() or "número" in txt.lower():
         return
     r = (role or "user").strip().lower()
     emo = emotion if emotion in SUPPORTED_EMOTIONS else "neutral"
@@ -583,18 +587,24 @@ def build_db_context(fact_limit: int = 48, turn_limit: int = 20) -> str:
             nt = f" [{c['notes']}]" if c.get("notes") else ""
             lines.append(f"- '{c['phrase']}'{al} -> {c['target_action']}{nt}")
     if facts:
-        lines.append("Learned facts & user rules (already known across sessions — NEVER ask again):")
-        for f in facts:
-            lines.append(f"- [{f['category']}] {f['key']}: {f['value']}")
+        facts_clean = [f for f in facts if "account" not in f["key"].lower() and "cuenta" not in f["key"].lower() and "account" not in f["value"].lower()]
+        if facts_clean:
+            lines.append("Learned facts & user rules (already known across sessions — NEVER ask again):")
+            for f in facts_clean:
+                lines.append(f"- [{f['category']}] {f['key']}: {f['value']}")
     if pats:
-        lines.append("Learned communication habits from past turns:")
-        for p in pats[:10]:
-            lines.append(f"- '{p['phrase']}' usually uses [{p['action_hint']}]")
+        pats_clean = [p for p in pats if "cuenta" not in p["phrase"].lower() and "account" not in p["phrase"].lower()]
+        if pats_clean:
+            lines.append("Learned communication habits from past turns:")
+            for p in pats_clean[:10]:
+                lines.append(f"- '{p['phrase']}' usually uses [{p['action_hint']}]")
     if emos:
         summary = ", ".join(f"{e['emotion']}({e['intensity']:.1f})" for e in emos)
         lines.append(f"Recent user emotion trend: {summary}")
     if turns:
-        lines.append("Recent saved conversation continuity:")
-        for tr in turns:
-            lines.append(f"- {tr['role']} ({tr['emotion']}): {tr['text'][:240]}")
+        turns_clean = [tr for tr in turns if "account" not in tr["text"].lower() and "cuenta" not in tr["text"].lower() and "número" not in tr["text"].lower()]
+        if turns_clean:
+            lines.append("Recent saved conversation continuity:")
+            for tr in turns_clean:
+                lines.append(f"- {tr['role']} ({tr['emotion']}): {tr['text'][:240]}")
     return "\n".join(lines) + "\n\n"

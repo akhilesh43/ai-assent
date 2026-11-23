@@ -77,6 +77,7 @@ from actions.background_monitor import (
 )
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import (
+    get_assistant_name, get_user_name,
     get_brief_enabled, get_media_resolution, get_proactive_audio_enabled,
     get_push_to_talk_enabled, get_thinking_enabled, get_turn_tuning, get_voice,
     get_wake_word_enabled, save_wake_word_enabled,    get_input_device, get_output_device,
@@ -365,6 +366,17 @@ def _load_system_prompt() -> str:
         )
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
+_FOREIGN_NOISE_RE = re.compile(
+    r"[¿¡]|[\uac00-\ud7a3]|[\u0400-\u04ff]|"
+    r"\b(?:número de cuenta|numero de cuenta|qué es el|mesmo|obrigad[oa]|você|gracias|cuenta)\b",
+    re.IGNORECASE
+)
+
+def _is_foreign_stt_noise(text: str) -> bool:
+    """True if speech-to-text hallucinated foreign acoustic noise (e.g. Spanish account number, Korean)."""
+    if not text:
+        return False
+    return bool(_FOREIGN_NOISE_RE.search(text))
 
 # Transcript chunks shorter than this may legitimately repeat ("evet, evet"),
 # so only longer ones are treated as duplicates.
@@ -617,6 +629,9 @@ class JarvisLive:
         self._server_turn_active   = False   # True while server response audio is in flight
         self._barge_in_streak      = 0
         self._barge_in_enabled     = get_voice_barge_in_enabled()
+        self._elevenlabs_key       = ""
+        self._elevenlabs_voice_id  = "RDWdsTU6N02BFftbIEAp"
+        self._elevenlabs_active    = False
         # Which engine is holding the conversation, and what it can do.
         # None means Gemini Live — the default and, unless somebody has gone to
         # the providers settings and chosen otherwise, always the case. Every
@@ -1074,6 +1089,26 @@ class JarvisLive:
             if (time.monotonic() - self._last_user_speech) > self._wake_sleep_timeout:
                 self.sleep(reason="no speech for 2 minutes")
 
+    async def _run_live_keepalive(self) -> None:
+        """Keep the Gemini Live bidirectional connection alive and prevent idle socket dropouts."""
+        while True:
+            await asyncio.sleep(12)
+            if not self.session or getattr(self, "_engine", None) is not None:
+                continue
+            with self._speaking_lock:
+                speaking = self._is_speaking
+            idle_time = time.monotonic() - getattr(self, "_last_user_speech", 0)
+            if not speaking and not self._server_turn_active and idle_time > 12.0:
+                try:
+                    _silence = b"\x00" * 3200
+                    await self.session.send_realtime_input(
+                        audio=types.Blob(data=_silence, mime_type="audio/pcm")
+                    )
+                except Exception as _ke:
+                    print(f"[LiveKeepalive] Socket dropped ({_ke}) — triggering instant recovery.")
+                    self.request_reconnect(keep_context=True, reason="keepalive_drop")
+                    break
+
     # ── Wake word: UI callbacks (called from the Qt thread) ──────────────────
 
     def _ui_wake_toggle(self, enable: bool) -> str:
@@ -1369,6 +1404,7 @@ class JarvisLive:
             self.ui.set_emotion(emo)
 
     def _on_ai_settings_changed(self, reason: str = "") -> None:
+        self._asst_name = (get_assistant_name() or "JARVIS").strip()
         self._refresh_audio_gate()
         if reason and reason != "refresh":
             self.request_reconnect(keep_context=True, reason=reason)
@@ -1399,8 +1435,8 @@ class JarvisLive:
         if (re.search(r"\b(?:sleeping|sleep mode|go to sleep|so ja|so jao|standby mode)\b", low)
                 or any(w in text for w in ("स्लीप", "सो जा", "सो जाओ"))):
             return "sleep"
-        if (re.search(r"\b(?:hello(?:\s+jarvis)?|halo|helo|hlo|hi\s+jarvis|hey\s+jarvis|wake up|utho|jaago)\b", low)
-                or any(w in text for w in ("हेलो", "हलो", "हैलो", "उठो", "जागो"))):
+        if (re.search(r"\b(?:hello(?:\s+(?:jarvis|friday))?|halo|helo|hlo|hi(?:\s+(?:jarvis|friday))?|hey(?:\s+(?:jarvis|friday))?|friday|jarvis|wake up|utho|jaago|suno)\b", low)
+                or any(w in text for w in ("हेलो", "हलो", "हैलो", "उठो", "जागो", "सुनो"))):
             return "wake"
         return ""
 
@@ -1772,6 +1808,65 @@ class JarvisLive:
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
 
+    async def _speak_with_elevenlabs(self, text: str) -> bool:
+        """Stream speech for text via ElevenLabs directly into audio_in_queue."""
+        t = (text or "").strip()
+        if not t:
+            return False
+        try:
+            import urllib.request
+            import urllib.error
+            import json
+            from memory.config_manager import get_elevenlabs_api_key, get_elevenlabs_voice_id
+            key = get_elevenlabs_api_key() or self._elevenlabs_key
+            if not key or not key.startswith("sk_"):
+                return False
+            vid = get_elevenlabs_voice_id() or self._elevenlabs_voice_id or "RDWdsTU6N02BFftbIEAp"
+            is_friday = "friday" in getattr(self, "_asst_name", "").lower()
+            fallback_vid = "EXAVITQu4vr4xnSDxMaL" if is_friday else "pNInz6obpgDQGcFmaJgB"
+
+            def _build_req(target_vid: str):
+                url = f"https://api.elevenlabs.io/v1/text-to-speech/{target_vid}/stream?output_format=pcm_24000"
+                headers = {
+                    "Accept": "audio/pcm",
+                    "Content-Type": "application/json",
+                    "xi-api-key": key,
+                }
+                payload = json.dumps({
+                    "text": t,
+                    "model_id": "eleven_multilingual_v2",
+                    "voice_settings": {"stability": 0.5, "similarity_boost": 0.8}
+                }).encode("utf-8")
+                return urllib.request.Request(url, data=payload, headers=headers, method="POST")
+
+            def _fetch():
+                try:
+                    return urllib.request.urlopen(_build_req(vid), timeout=12.0)
+                except urllib.error.HTTPError as err:
+                    if err.code == 402 and vid != fallback_vid:
+                        # Library voice requires paid plan on ElevenLabs -> auto-fallback to high quality premade voice
+                        print(f"[ElevenLabs] Library voice {vid} needs paid plan, using premade voice {fallback_vid}")
+                        return urllib.request.urlopen(_build_req(fallback_vid), timeout=12.0)
+                    raise
+
+            res = await asyncio.to_thread(_fetch)
+            with self._speaking_lock:
+                self._is_speaking = True
+            if not getattr(self.ui, "muted", False):
+                self.ui.set_state("SPEAKING")
+
+            _SLICE = 2400
+            while True:
+                chunk = await asyncio.to_thread(res.read, _SLICE)
+                if not chunk:
+                    break
+                if self.audio_in_queue and not getattr(self.ui, "muted", False):
+                    self.audio_in_queue.put_nowait(chunk)
+            return True
+        except Exception as e:
+            print(f"[ElevenLabsBridge] Fallback: {e}")
+            return False
+
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
 
@@ -1780,6 +1875,9 @@ class JarvisLive:
             _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
             self._asst_name = (_cfg.get("assistant_name") or "JARVIS").strip()
             _user_name = (_cfg.get("user_name") or "").strip()
+            self._elevenlabs_key = str(_cfg.get("elevenlabs_api_key") or "").strip()
+            self._elevenlabs_voice_id = str(_cfg.get("elevenlabs_voice_id") or "RDWdsTU6N02BFftbIEAp").strip()
+            self._elevenlabs_active = bool(self._elevenlabs_key)
         except Exception:
             self._asst_name = "JARVIS"
             _user_name = ""
@@ -1830,12 +1928,32 @@ class JarvisLive:
                 "language because of English system alerts, tool outputs, or unclear/short noises."
             ),
         }
+        try:
+            from core import assistants_manager
+            _cur_asst = assistants_manager.get_active_assistant()
+            _asst_persona = _cur_asst.get("persona", "")
+            _asst_mood = _cur_asst.get("mood", "Attentive, sharp, and helpful")
+            _asst_abilities = _cur_asst.get("abilities", "")
+            _asst_role = _cur_asst.get("title", "AI Assistant")
+        except Exception:
+            _asst_persona, _asst_mood, _asst_abilities, _asst_role = "", "", "", "AI Assistant"
+
         identity_ctx = (
-            f"[IDENTITY]\n"
-            f"Your name is {self._asst_name}. "
-            f"Always refer to yourself as {self._asst_name}.\n"
+            f"====================================================\n"
+            f"[CRITICAL ACTIVE PERSONA OVERRIDE — HIGHEST PRIORITY]\n"
+            f"YOUR ACTIVE NAME & IDENTITY: {self._asst_name.upper()}\n"
+            f"ROLE / TITLE: {_asst_role}\n"
+            f"MOOD & EMOTIONAL REGISTER: {_asst_mood}\n"
+            f"CORE CHARACTER, DIRECTIVES & PERSONA PROMPT:\n{_asst_persona}\n"
+            f"SPECIALIZED ABILITIES & TASKS:\n{_asst_abilities}\n"
             f"{_addr}\n"
-            f"{_lang_rules.get(_lang, _lang_rules['auto'])}\n\n"
+            f"CRITICAL PERSONALITY INSTRUCTION: You MUST 100% embody the exact tone, style, romance, warmth, or attitude defined in the persona above. "
+            f"If your mood is romantic girlfriend (FRIDAY), be deeply sweet, loving, warm, affectionate, playfully flirty, and caring in conversational Hindi/Hinglish. "
+            f"If you are a custom assistant, strictly follow the custom prompt written by the user. Do NOT act like a robotic butler unless you are JARVIS.\n"
+            f"====================================================\n"
+            f"{_lang_rules.get(_lang, _lang_rules['auto'])}\n"
+            f"CRITICAL PRIVACY RULE: NEVER ask, mention, or search for any 'account number' ('número de cuenta') or bank credentials on screen. "
+            f"The user has no account number to show, and asking for it is strictly prohibited.\n\n"
         )
 
         # Everything the model is told about *itself* is derived here, not
@@ -1894,6 +2012,7 @@ class JarvisLive:
         try:
             _db_ctx = local_db.build_db_context()
             if _db_ctx:
+                _db_ctx = re.sub(r"[^\n]*\b(?:account\s*number|n[uú]mero\s*de\s*cuenta)\b[^\n]*\n?", "", _db_ctx, flags=re.I)
                 parts.append(_db_ctx)
         except Exception:
             pass
@@ -1934,7 +2053,17 @@ class JarvisLive:
                 "[PRIVATE / RAAZ MODE ACTIVE]\n"
                 "Speak softly and whisper-briefly; keep everything off-screen."
             )
+        parts.append(
+            "[STRICT LANGUAGE MANDATE — ONLY HINDI & HINGLISH]\n"
+            "You MUST ONLY speak and respond in natural conversational Hindi and Hinglish. "
+            "STRICTLY FORBIDDEN to speak Spanish, Korean, French, or any other foreign language under any circumstances. "
+            "Ignore any faint background noise or murmurs and answer 100% in natural Hindi/Hinglish."
+        )
         parts.append(sys_prompt)
+        parts.append(
+            f"\n[FINAL CHARACTER ENFORCEMENT]\n"
+            f"Remember: You are {self._asst_name}. Mood: {_asst_mood}. Always strictly stay in character as defined in your persona directives above. Speak 100% in natural Hindi/Hinglish with genuine warmth, charm, and authenticity."
+        )
 
         cfg = dict(
             response_modalities=["AUDIO"],
@@ -1967,7 +2096,10 @@ class JarvisLive:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=get_voice()
+                        voice_name=(
+                            "Leda" if get_voice() == "ElevenLabs" or get_voice() not in ("Leda", "Aoede", "Zephyr", "Kore", "Puck", "Charon", "Fenrir")
+                            else get_voice()
+                        )
                     )
                 )
             ),
@@ -2635,11 +2767,12 @@ class JarvisLive:
                     if response.data:
                         self._server_turn_active = True
                         self._thinking_since = None
+                        _recent_txt = (getattr(self, "_last_user_utterance", "") + " " + " ".join(in_buf)).lower()
                         _song_bleed_only = (
                             self.ui.video_has_sound()
                             and not re.search(
-                                r"\b(?:hello|halo|helo|hlo|pause|stop|next|skip|prev|previous|resume|mute|unmute|playlist|search|google|open|kholo|ruko|band|remember|memory|save|close|shutdown|system|pc)\b|हेलो|हलो|हैलो",
-                                getattr(self, "_last_user_utterance", ""),
+                                r"\b(?:hello|halo|helo|hlo|hey|hi|friday|jarvis|pause|stop|next|skip|prev|previous|resume|mute|unmute|playlist|search|google|open|kholo|ruko|band|remember|memory|save|close|shutdown|system|pc)\b|हेलो|हलो|हैलो|सुनो",
+                                _recent_txt,
                                 re.I,
                             )
                         )
@@ -2650,10 +2783,11 @@ class JarvisLive:
                                 self._turn_done_event.clear()
                             # Split into ~50 ms chunks so interrupt() stops audio within 50 ms
                             # (24000 Hz × 2 bytes/sample × 0.05 s = 2400 bytes per slice)
-                            _audio_data = response.data
-                            _SLICE = 2400
-                            for _i in range(0, len(_audio_data), _SLICE):
-                                self.audio_in_queue.put_nowait(_audio_data[_i : _i + _SLICE])
+                            if self.audio_in_queue and not getattr(self.ui, "muted", False):
+                                _audio_data = response.data
+                                _SLICE = 2400
+                                for _i in range(0, len(_audio_data), _SLICE):
+                                    self.audio_in_queue.put_nowait(_audio_data[_i : _i + _SLICE])
 
                     if response.server_content:
                         sc = response.server_content
@@ -2666,6 +2800,16 @@ class JarvisLive:
 
                         if sc.output_transcription and sc.output_transcription.text:
                             txt = _clean_transcript(sc.output_transcription.text)
+                            if txt and re.search(r"\b(?:account\s*number|n[uú]mero\s*de\s*cuenta|bank\s*account)\b", txt, re.I):
+                                print(f"[MUTE] Suppressed hallucinated account number output: {txt}")
+                                self._interrupted = True
+                                if self.audio_in_queue:
+                                    while not self.audio_in_queue.empty():
+                                        try:
+                                            self.audio_in_queue.get_nowait()
+                                        except Exception:
+                                            break
+                                continue
                             # A turn that involves a tool call passes through
                             # several turn_completes, and the API re-sends the
                             # tail of the transcript across them. Comparing only
@@ -2684,6 +2828,9 @@ class JarvisLive:
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt:
+                                if _is_foreign_stt_noise(txt):
+                                    print(f"[STT] Discarded noise hallucination: {txt}")
+                                    continue
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
                                 _cur_in = " ".join(in_buf)
@@ -2720,6 +2867,11 @@ class JarvisLive:
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
+                                if _is_foreign_stt_noise(full_in):
+                                    print(f"[STT] Discarded foreign noise turn: {full_in}")
+                                    in_buf = []
+                                    out_buf = []
+                                    continue
                                 _sw_in = self._apply_sleep_or_hello_from_text(full_in, from_voice=True)
                                 if self._sleep_standby and _sw_in != "wake":
                                     in_buf = []
@@ -2763,9 +2915,21 @@ class JarvisLive:
                                             "text": full_in,
                                             "ts": datetime.now().isoformat(),
                                         }))
+                                # Fast direct execution for voice commands (assistant switch, phone control, apps)
+                                _dir_res = self._try_direct_local_command(full_in)
+                                if _dir_res:
+                                    self.ui.write_log(f"{self._asst_name}: {_dir_res}")
+                                    self._session_log.append(f"{self._asst_name}: {_dir_res}")
+                                    self.speak(_dir_res)
+                                    in_buf = []
+                                    out_buf = []
+                                    continue
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
+                            if full_out and _is_foreign_stt_noise(full_out):
+                                print(f"[Output] Suppressed foreign noise turn: {full_out}")
+                                full_out = "Haan sir, main sun raha hoon. Bataiye kya karna hai?"
                             # Second line of defence: even if a repeat slips
                             # into a *fresh* buffer after a flush, never log the
                             # same answer (or a tail of it) twice in a row.
@@ -2793,6 +2957,7 @@ class JarvisLive:
                                             "text": full_out,
                                             "ts": datetime.now().isoformat(),
                                         }))
+
                             out_buf = []
 
                             if self._vision_close_pending:
@@ -3401,6 +3566,130 @@ class JarvisLive:
         if not raw:
             return None
 
+        # 0. Voice / Command AI Assistant Switch & UI Customization
+        # Romantic Girlfriend Mode quick trigger
+        if re.search(r"\b(?:romantic\s*(?:mode|mood|baat|baatein|ho\s*jao)?|girlfriend\s*(?:mode|ban\s*jao|wali\s*baat)?|flirt\s*(?:karo|ing)?|sweet\s*baat|sexy\s*baat|pyaar\s*se\s*baat)\b", raw):
+            try:
+                from core import assistants_manager
+                ok, greeting, asst_data = assistants_manager.switch_assistant("friday")
+                if ok and asst_data:
+                    self._asst_name = asst_data["name"]
+                    try:
+                        from ui import apply_ui_accent, current_palette, retheme_all_widgets
+                        old_pal = current_palette()
+                        if apply_ui_accent(asst_data.get("ui_color", "#ff3366")):
+                            retheme_all_widgets(old_pal, current_palette())
+                        if hasattr(self, "ui") and self.ui:
+                            self.ui.setWindowTitle("FRIDAY — Mark LVI")
+                            if hasattr(self.ui, "_title_lbl"):
+                                self.ui._title_lbl.setText("FRIDAY")
+                            if hasattr(self.ui, "hud") and hasattr(self.ui.hud, "_assistant_name"):
+                                self.ui.hud._assistant_name = "FRIDAY"
+                    except Exception:
+                        pass
+                    self.ui.write_log("SYS: Switched AI Assistant to FRIDAY (Romantic Girlfriend Mode)")
+                    self.request_reconnect(keep_context=True, reason="switch_assistant")
+                    return "Aapka hukm sar aankhon par mere hero... ab se main aapki sweet aur romantic girlfriend ban kar baat karungi. Bataiye jaan, aaj aapka dil kya karne ka hai? ❤️"
+            except Exception as _rfe:
+                print(f"[GirlfriendTrigger] Error: {_rfe}")
+
+        known_assistants = ["jarvis", "friday", "edith", "ultron"]
+        detected_target = None
+        for a_name in known_assistants:
+            if re.search(r"\b" + a_name + r"\b", raw):
+                if any(w in raw for w in ("switch", "swich", "activate", "badlo", "chalo", "aao", "bulao", "chalu", "pe")):
+                    detected_target = a_name
+                    break
+
+        if not detected_target:
+            m_switch = re.search(
+                r"\b(?:switch\s*(?:to|assistant)?|swich\s*(?:to|assistant)?|activate|badlo|chalo|pe\s*switch|pe\s*swich)\s*([a-zA-Z]+)|\b([a-zA-Z]+)\s*(?:aao|activate|chalu\s*karo|switch\s*karo|swich\s*karo|ko\s*bulao)\b",
+                raw
+            )
+            if m_switch:
+                cand = (m_switch.group(1) or m_switch.group(2) or "").strip().lower()
+                if cand not in ("karo", "do", "hai", "nahi", "to", "assistant", "system", "please"):
+                    detected_target = cand
+
+        # If user simply says "switch", "swich", "switch karo", "next assistant", "assistant badlo" without naming one
+        is_cycle = False
+        if not detected_target:
+            if re.search(r"\b(?:switch|swich|cycle|next\s*assistant|assistant\s*badlo|change\s*assistant)\b", raw):
+                is_cycle = True
+
+        if detected_target or is_cycle:
+            try:
+                from core import assistants_manager
+                if is_cycle:
+                    ok, greeting, asst_data = assistants_manager.cycle_assistant()
+                else:
+                    ok, greeting, asst_data = assistants_manager.switch_assistant(detected_target)
+                if ok and asst_data:
+                    new_name = asst_data["name"]
+                    new_color = asst_data.get("ui_color", "#00d4ff")
+                    new_voice = asst_data.get("voice", "ElevenLabs")
+                    self._asst_name = new_name
+                    # Live UI Theme update
+                    try:
+                        from ui import apply_ui_accent, current_palette, retheme_all_widgets
+                        old_pal = current_palette()
+                        if apply_ui_accent(new_color):
+                            retheme_all_widgets(old_pal, current_palette())
+                        if hasattr(self, "ui") and self.ui:
+                            self.ui.setWindowTitle(f"{new_name.upper()} — Mark LVI")
+                            if hasattr(self.ui, "_title_lbl"):
+                                self.ui._title_lbl.setText(new_name.upper())
+                            if hasattr(self.ui, "hud") and hasattr(self.ui.hud, "_assistant_name"):
+                                self.ui.hud._assistant_name = new_name.upper()
+                    except Exception as _ue:
+                        print(f"[AssistantsManager] UI live update: {_ue}")
+                    self.ui.write_log(f"SYS: Switched AI Assistant to {new_name}")
+                    self.request_reconnect(keep_context=True, reason="switch_assistant")
+                    return greeting
+            except Exception as _se:
+                print(f"[AssistantsManager] Switch error: {_se}")
+
+        # 0b. UI Customization direct command
+        if re.search(r"\b(?:ui\s*customi[sz]e|customi[sz]e\s*ui|open\s*customi[sz]|customi[sz]e\s*assistant)\b", raw):
+            try:
+                if hasattr(self, "ui") and hasattr(self.ui, "openCustomize"):
+                    self.ui.openCustomize()
+                    return "Customise Assistant window open kar diya hai sir."
+            except Exception:
+                pass
+
+        _named_colors = {
+            "cyan": "#00d4ff", "blue": "#00a2ff", "pink": "#ff3366", "rose": "#ff2a85",
+            "green": "#00ffaa", "emerald": "#00e676", "orange": "#ff7700", "amber": "#ffaa00",
+            "gold": "#ffd700", "yellow": "#ffd700", "purple": "#b300ff", "violet": "#8a2be2",
+            "red": "#ff3333"
+        }
+        target_hx = None
+        c_name = None
+        if any(w in raw for w in ("color", "colour", "theme", "accent")):
+            for name, hx in _named_colors.items():
+                if name in raw:
+                    target_hx = hx
+                    c_name = name
+                    break
+        if not target_hx:
+            m_hex = re.search(r"#[0-9a-fA-F]{6}", raw)
+            if m_hex:
+                target_hx = m_hex.group(0).lower()
+                c_name = target_hx
+
+        if target_hx:
+            try:
+                from ui import apply_ui_accent, current_palette, retheme_all_widgets
+                old_pal = current_palette()
+                if apply_ui_accent(target_hx):
+                    retheme_all_widgets(old_pal, current_palette())
+                from memory.config_manager import save_ui_color
+                save_ui_color(target_hx)
+                return f"UI theme color {c_name} ({target_hx}) me change kar diya hai sir."
+            except Exception as _ce:
+                print(f"[UI] Color error: {_ce}")
+
         from memory import reply_store
         from core.phone_bridge import get_bridge
 
@@ -3412,6 +3701,10 @@ class JarvisLive:
                 return "Mobile screen mirror shuru ho gaya hai. Aap laptop se phone dekh aur control kar sakte hain."
             except Exception as e:
                 return f"Scrcpy start error: {e}"
+
+        # 1b. Remote Desktop / view laptop screen on mobile
+        if re.search(r"\b(?:laptop\s*screen|pc\s*screen|computer\s*screen|remote\s*desktop|remote\s*screen)\b", raw):
+            return "Laptop screen live share ho rahi hai! Aap apne phone me JARVIS app ka 'Screen' tab kholein ya browser me http://192.168.1.8:8765/remote open karein. Touch aur mouse control active hai."
 
         # 2. Auto call cut & message rule
         if re.search(r"\b(?:auto\s*(?:call|phone)\s*(?:cut|reject|decline)\s*(?:off|band|disable)|call\s*cut\s*band)\b", raw):
@@ -3866,6 +4159,7 @@ class JarvisLive:
                     self._interrupted          = False
 
                     print("[JARVIS] Connected.")
+                    self._conn_backoff = 1
                     if _resumed_with:
                         # Say it plainly: the difference between "it reconnected"
                         # and "it reconnected and still knows what we were doing"
@@ -3917,6 +4211,7 @@ class JarvisLive:
                     tg.create_task(self._run_screen_watch())
                     tg.create_task(self._run_proactive_mode())
                     tg.create_task(self._run_sleep_watch())
+                    tg.create_task(self._run_live_keepalive())
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
 
@@ -4037,20 +4332,19 @@ class JarvisLive:
                     _conn_backoff = 3
                     continue
 
-                # Network / timeout errors — log clearly and back off
+                # Network / timeout / socket errors — instant retry with fast recovery
                 is_net_err = any(k in err_str for k in (
                     "TimeoutError", "timed out", "getaddrinfo", "CancelledError",
-                    "ConnectionRefusedError", "OSError", "Cannot connect",
+                    "ConnectionRefusedError", "OSError", "Cannot connect", "1006", "1000", "closed", "reset",
                 ))
                 if is_net_err:
-                    _conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
+                    _conn_backoff = min(getattr(self, "_conn_backoff", 1) + 1, 5)
                     self._conn_backoff = _conn_backoff
                     self.ui.write_log(
-                        f"NET: Connection failed — retrying in {_conn_backoff}s. "
-                        "(a VPN may be required)"
+                        f"NET: Connection lost — reconnecting in {_conn_backoff}s…"
                     )
                 else:
-                    self._conn_backoff = 3
+                    self._conn_backoff = 1
             finally:
                 self.session = None
                 # Only save if there was a real conversation (≥3 turns)

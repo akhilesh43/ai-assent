@@ -1,23 +1,23 @@
 # ── MARK LVI — what never belongs in the repository ──────────────────────────
-# Everything listed here is created by the app on first run. A fresh clone with
-# none of it present boots straight to the setup screen, which is the intended
-# first experience — so nothing here needs to be committed, and some of it must
-# never be.
+# Everything listed here is created by the app on first run.
 
-# ── Secrets. Committing any of these publishes them. ──────────────────────────
-config/api_keys.json          # your Gemini API key, plus per-plugin credentials
-config/*firebase*.json        # Firebase service account credentials
-config/certs/                 # the dashboard's TLS private key and certificate
-generated_images/             # pictures made by Image Studio (your content)
-config/ui_skills.json         # click-sequences you taught JARVIS
-config/ui_skills/             # small screenshots of the buttons you clicked — private
-config/whatsapp_web/          # a LINKED WhatsApp session — committing it hands
-                              # somebody your WhatsApp account, not just a key
-**/token*.json                # Google OAuth tokens (Gmail / Calendar plugins)
-**/client_secret*.json        # Google OAuth client secrets
+# ── Secrets & API Keys (Gemini, ElevenLabs, Firebase, OAuth, Tokens) ──────────
+config/api_keys.json
+config/phone_devices.json
+config/assistants.json
+config/*firebase*.json
+config/certs/
+generated_images/
+config/ui_skills.json
+config/ui_skills/
+config/whatsapp_web/
+**/token*.json
+**/client_secret*.json
 *credentials*.json
 .env
 .env.*
+*.key
+*.pem
 
 # ── Personal data the assistant accumulates about you ─────────────────────────
 memory/long_term.json
@@ -25,6 +25,13 @@ memory/*.db
 config/voice_fingerprint.json
 config/browser_profile/
 config/jarvis_local.db*
+
+# ── Scratch & temporary tests ────────────────────────────────────────────────
+scratch/
+test_*.png
+test_*.webp
+*.bak
+*.backup
 
 # ── Python build noise ────────────────────────────────────────────────────────
 __pycache__/

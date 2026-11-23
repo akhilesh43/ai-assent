@@ -1,0 +1,2555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>JARVIS MARK LVI - UNIFIED HUD</title>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    :root {
+      --bg: #030712;
+      --panel-bg: rgba(6, 19, 38, 0.86);
+      --panel-border: rgba(0, 243, 255, 0.35);
+      --glow-cyan: #00f3ff;
+      --glow-blue: #0088fe;
+      --dim-cyan: rgba(0, 243, 255, 0.12);
+      --text-bright: #e0f7fa;
+      --text-dim: #7daec8;
+      --text-muted: #42637a;
+      --accent-red: #ff3366;
+      --accent-green: #00ffaa;
+      --accent-amber: #ffaa00;
+      --accent-orange: #ff7700;
+      --accent-gold: #ffb700;
+    }
+    body, html {
+      width: 100vw; height: 100vh; overflow: hidden; background: var(--bg);
+      font-family: 'Consolas', 'Segoe UI', -apple-system, monospace, sans-serif;
+      color: var(--text-bright);
+    }
+
+    /* Ambient sci-fi background with grid & subtle scanline */
+    .hud-bg {
+      position: fixed; inset: 0;
+      background: radial-gradient(circle at 50% 50%, rgba(0, 60, 120, 0.28) 0%, rgba(2, 6, 18, 0.98) 75%),
+                  linear-gradient(rgba(0, 243, 255, 0.035) 1px, transparent 1px),
+                  linear-gradient(90deg, rgba(0, 243, 255, 0.035) 1px, transparent 1px);
+      background-size: 100% 100%, 30px 30px, 30px 30px;
+      pointer-events: none; z-index: 1;
+    }
+    .hud-bg::after {
+      content: ""; position: absolute; inset: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0, 243, 255, 0.015) 3px, rgba(0, 243, 255, 0.015) 6px);
+      pointer-events: none;
+    }
+
+    #hud-container {
+      position: relative; z-index: 2; width: 100vw; height: 100vh;
+      display: flex; flex-direction: column; padding: 10px 14px 10px; gap: 10px;
+    }
+
+    /* ── STREAMLINED FUTURISTIC TOP BAR ── */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      height: 48px; border: 1px solid var(--panel-border);
+      background: rgba(4, 14, 30, 0.94); border-radius: 8px;
+      padding: 0 16px; box-shadow: 0 0 20px rgba(0, 243, 255, 0.12); flex-shrink: 0;
+    }
+    .hud-brand-wrap {
+      display: flex; align-items: center; gap: 14px;
+    }
+    .hud-brand {
+      display: flex; align-items: baseline; gap: 8px;
+      font-size: 20px; font-weight: 900; letter-spacing: 4px; color: var(--glow-cyan);
+      text-shadow: 0 0 14px var(--glow-cyan);
+    }
+    .hud-brand small { font-size: 10.5px; font-weight: 700; color: var(--text-dim); letter-spacing: 2px; }
+
+    /* Chamfered Tech Buttons (Gear ⚙ & Sliders 🎛) */
+    .hud-tech-btns {
+      display: flex; align-items: center; gap: 8px; margin-left: 6px;
+    }
+    .tech-box-btn {
+      position: relative; width: 30px; height: 30px;
+      background: rgba(0, 243, 255, 0.06); border: 1.5px solid var(--glow-cyan);
+      clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--glow-cyan); cursor: pointer; transition: all 0.2s;
+      box-shadow: 0 0 10px rgba(0, 243, 255, 0.35);
+    }
+    .tech-box-btn:hover {
+      background: rgba(0, 243, 255, 0.25); color: #fff;
+      box-shadow: 0 0 16px var(--glow-cyan); transform: scale(1.08);
+    }
+    .tech-box-btn:active { transform: scale(0.94); }
+    .tech-btn-svg {
+      width: 17px; height: 17px; filter: drop-shadow(0 0 4px var(--glow-cyan));
+    }
+
+    /* Center Holographic Header Indicator */
+    .header-center-intel {
+      display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 800;
+      letter-spacing: 2.5px; color: var(--text-dim);
+    }
+    .hdr-wave-pulse {
+      display: flex; gap: 2px; align-items: center; height: 16px;
+    }
+    .hdr-wave-bar {
+      width: 2.5px; border-radius: 1px; background: var(--glow-cyan);
+      animation: hdr-pulse 1.2s ease-in-out infinite alternate;
+    }
+    @keyframes hdr-pulse { 0% { height: 3px; } 100% { height: 15px; } }
+
+    .header-right {
+      display: flex; align-items: center; gap: 16px;
+    }
+    .clock-text {
+      font-size: 17px; font-weight: 800; color: var(--glow-cyan);
+      letter-spacing: 2px; text-shadow: 0 0 10px rgba(0, 243, 255, 0.6);
+    }
+    .status-pill {
+      display: flex; align-items: center; gap: 7px; padding: 5px 12px;
+      border-radius: 12px; font-size: 10px; font-weight: 800; letter-spacing: 1.5px;
+      background: rgba(0, 255, 170, 0.12); border: 1px solid rgba(0, 255, 170, 0.4); color: var(--accent-green);
+    }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; } }
+
+    /* ── UNIFIED 3-COLUMN LAYOUT ── */
+    .main-grid {
+      flex: 1; display: grid; grid-template-columns: 260px 1fr 340px; gap: 12px; min-height: 0;
+    }
+
+    /* Panels */
+    .panel {
+      background: var(--panel-bg); border: 1px solid var(--panel-border);
+      border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column;
+      position: relative; box-shadow: inset 0 0 20px rgba(0, 243, 255, 0.04), 0 4px 16px rgba(0,0,0,0.6);
+      backdrop-filter: blur(8px);
+    }
+    .panel-hdr {
+      font-size: 10px; font-weight: 800; letter-spacing: 2px; color: var(--glow-cyan);
+      text-transform: uppercase; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid rgba(0, 243, 255, 0.15); padding-bottom: 5px;
+    }
+    .panel-hdr small { font-size: 9px; color: var(--text-dim); }
+
+    /* ── LEFT COLUMN ── */
+    .col-left { display: flex; flex-direction: column; gap: 10px; }
+    
+    /* Calendar */
+    .calendar-wrap { display: flex; gap: 12px; align-items: center; margin-bottom: 4px; }
+    .cal-date-big {
+      font-size: 34px; font-weight: 900; color: var(--glow-cyan); line-height: 1;
+      text-align: center; border-right: 1px solid var(--panel-border); padding-right: 12px;
+      text-shadow: 0 0 10px rgba(0, 243, 255, 0.5);
+    }
+    .cal-date-big small { display: block; font-size: 10px; font-weight: 700; color: var(--text-dim); margin-top: 3px; }
+    .cal-grid {
+      flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; font-size: 9px; text-align: center; color: var(--text-dim);
+    }
+    .cal-grid span.today { color: #000; background: var(--glow-cyan); border-radius: 2px; font-weight: bold; box-shadow: 0 0 6px var(--glow-cyan); }
+
+    /* ── SYSTEMS & TASKS SWITCHABLE PANEL ── */
+    .panel-systems {
+      position: relative; background: var(--panel-bg);
+      border: 1.5px solid var(--panel-border);
+      clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+      padding: 10px 12px; display: flex; flex-direction: column; flex: 1;
+      box-shadow: inset 0 0 20px rgba(0, 243, 255, 0.05), 0 4px 16px rgba(0,0,0,0.6);
+      backdrop-filter: blur(8px);
+    }
+    .sys-hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid rgba(0, 243, 255, 0.22); padding-bottom: 6px; margin-bottom: 8px;
+    }
+    .sys-title {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 11px; font-weight: 900; letter-spacing: 2px; color: var(--glow-cyan);
+    }
+    .sys-bar-orange {
+      width: 4px; height: 13px; background: var(--accent-orange); border-radius: 1px;
+      box-shadow: 0 0 8px var(--accent-orange);
+    }
+    .sys-tab-switcher {
+      display: flex; gap: 4px;
+    }
+    .sys-pill-btn {
+      background: rgba(0, 243, 255, 0.06); border: 1px solid rgba(0, 243, 255, 0.2);
+      color: var(--text-dim); font-size: 9px; font-weight: 800; padding: 2px 7px; border-radius: 4px;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .sys-pill-btn.active {
+      background: var(--glow-cyan); color: #000; border-color: var(--glow-cyan);
+    }
+
+    /* 2x2 Circular Dials Grid */
+    .sys-dials-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; align-items: center; justify-items: center;
+    }
+    .sys-dial-item {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    .dial-svg-wrap {
+      position: relative; width: 95px; height: 86px; display: flex; align-items: center; justify-content: center;
+    }
+    .dial-svg { width: 95px; height: 95px; }
+    .dial-track { fill: none; stroke: rgba(0, 243, 255, 0.12); stroke-width: 6; stroke-linecap: round; }
+    .dial-progress {
+      fill: none; stroke: var(--glow-cyan); stroke-width: 6; stroke-linecap: round;
+      stroke-dasharray: 145; stroke-dashoffset: 103;
+      transition: stroke-dashoffset 0.5s ease, stroke 0.3s;
+      filter: drop-shadow(0 0 6px var(--glow-cyan));
+    }
+    .dial-progress.warn { stroke: var(--accent-red); filter: drop-shadow(0 0 8px var(--accent-red)); }
+    .dial-ticks line { stroke: rgba(0, 243, 255, 0.35); stroke-width: 1.2; }
+    .dial-val {
+      position: absolute; top: 38px; left: 0; right: 0; text-align: center;
+      font-size: 14px; font-weight: 900; color: #fff; letter-spacing: 1px;
+      text-shadow: 0 0 6px rgba(0,0,0,0.9);
+    }
+    .dial-lbl {
+      margin-top: -6px; font-size: 10px; font-weight: 800; letter-spacing: 1.5px;
+      color: var(--glow-cyan); text-align: center;
+    }
+    .dial-lbl.warn { color: var(--accent-red); text-shadow: 0 0 8px var(--accent-red); }
+
+    /* Tasks View */
+    .tasks-view-wrap {
+      display: none; flex-direction: column; flex: 1; gap: 8px;
+    }
+    .btn-routines {
+      background: rgba(0, 243, 255, 0.08); border: 1px solid var(--panel-border);
+      color: var(--glow-cyan); font-size: 9.5px; font-weight: 800; letter-spacing: 1.5px;
+      padding: 3px 10px; border-radius: 4px; cursor: pointer; transition: all 0.2s;
+    }
+    .btn-routines:hover {
+      background: var(--glow-cyan); color: #000; box-shadow: 0 0 10px var(--glow-cyan);
+    }
+    .tasks-list-content {
+      flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+      padding-right: 4px; min-height: 160px;
+    }
+    .tasks-empty-hint {
+      color: var(--text-dim); font-size: 11px; margin-top: 10px;
+    }
+    .task-card-mini {
+      background: rgba(0, 243, 255, 0.04); border: 1px solid rgba(0, 243, 255, 0.18);
+      border-radius: 5px; padding: 6px 8px; font-size: 10.5px; display: flex; align-items: center; justify-content: space-between;
+    }
+    .task-card-mini span { color: #fff; }
+    .task-badge-status {
+      font-size: 8.5px; padding: 2px 5px; border-radius: 3px; font-weight: bold;
+      background: rgba(0, 255, 170, 0.15); color: var(--accent-green); border: 1px solid rgba(0, 255, 170, 0.3);
+    }
+    .task-add-row {
+      display: flex; gap: 6px; margin-top: 4px;
+    }
+    .task-inp-mini {
+      flex: 1; background: rgba(0, 13, 24, 0.85); border: 1px solid var(--panel-border);
+      border-radius: 4px; padding: 4px 8px; color: #fff; font-size: 10.5px; outline: none;
+    }
+    .btn-add-task {
+      background: var(--dim-cyan); border: 1px solid var(--panel-border); color: var(--glow-cyan);
+      border-radius: 4px; padding: 4px 10px; font-size: 10px; font-weight: bold; cursor: pointer;
+    }
+
+    .sparkline { width: 100%; height: 34px; margin-top: 4px; }
+
+    /* AI Module Quick Card */
+    .ai-mod-card {
+      background: rgba(0, 243, 255, 0.05); border: 1px solid rgba(0, 243, 255, 0.2);
+      border-radius: 6px; padding: 5px 8px; font-size: 9.5px; line-height: 1.4; margin-top: auto;
+    }
+    .ai-mod-badge { color: var(--glow-cyan); font-weight: bold; }
+
+    /* ── CENTER COLUMN: 3D HOLOGRAPHIC JARVIS NEURAL SPHERE (Iron Man Authentic) ── */
+    .col-center {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      position: relative; overflow: hidden;
+    }
+
+    /* 3D Holographic Sphere Container */
+    .reactor-container {
+      position: relative; width: 440px; height: 390px; display: flex; align-items: center; justify-content: center;
+      transition: opacity 0.3s, transform 0.3s;
+    }
+    #holo-sphere-canvas {
+      position: absolute; inset: 0; width: 440px; height: 390px; pointer-events: none; z-index: 2;
+    }
+    .holo-center-core {
+      position: relative; width: 94px; height: 94px; border-radius: 50%;
+      background: radial-gradient(circle at 50% 50%, rgba(255, 235, 160, 0.38) 0%, rgba(255, 145, 0, 0.42) 50%, rgba(10, 4, 0, 0.78) 85%);
+      box-shadow: 0 0 35px rgba(255, 160, 0, 0.75), inset 0 0 18px rgba(255, 255, 255, 0.7);
+      border: 1.5px solid rgba(255, 190, 60, 0.85);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      cursor: pointer; transition: transform 0.25s, box-shadow 0.25s; z-index: 5;
+      backdrop-filter: blur(3px);
+    }
+    .holo-center-core:hover {
+      transform: scale(1.08); box-shadow: 0 0 55px rgba(255, 180, 0, 0.95), inset 0 0 25px #fff;
+    }
+    .holo-center-core .core-title {
+      font-size: 17.5px; font-weight: 900; letter-spacing: 3.5px; color: #fff;
+      text-shadow: 0 0 15px #ffaa00, 0 0 25px #ff8800;
+    }
+    .holo-center-core .core-sub {
+      font-size: 8px; font-weight: 800; letter-spacing: 1.8px; color: #ffca28; margin-top: 2px;
+    }
+
+    /* Cyan Mode Variant for Center Core */
+    .holo-center-core.cyan-mode {
+      background: radial-gradient(circle at 50% 50%, rgba(200, 250, 255, 0.4) 0%, rgba(0, 180, 255, 0.5) 45%, rgba(0, 10, 25, 0.85) 80%);
+      box-shadow: 0 0 40px rgba(0, 243, 255, 0.75), inset 0 0 20px rgba(255, 255, 255, 0.7);
+      border: 1.5px solid var(--glow-cyan);
+    }
+    .holo-center-core.cyan-mode .core-title {
+      text-shadow: 0 0 15px var(--glow-cyan), 0 0 25px var(--glow-cyan);
+    }
+    .holo-center-core.cyan-mode .core-sub {
+      color: var(--glow-cyan);
+    }
+
+    /* ── HOLOGRAPHIC AI VIDEO AVATAR WITH CHROMA-KEY & LIGHTING ── */
+    .avatar-video-stage {
+      position: relative;
+      width: 280px;
+      height: 330px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 10;
+      transition: transform 0.25s ease;
+    }
+    .avatar-video-stage:hover {
+      transform: scale(1.02);
+    }
+    #avatar-chroma-canvas {
+      position: relative;
+      width: 280px;
+      height: 330px;
+      z-index: 8;
+      pointer-events: none;
+      filter: drop-shadow(0 0 18px rgba(0, 243, 255, 0.5));
+      transition: filter 0.4s ease;
+    }
+    .avatar-holo-img {
+      position: absolute;
+      top: 0;
+      left: 10px;
+      width: 260px;
+      height: 330px;
+      object-fit: contain;
+      z-index: 8;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      filter: drop-shadow(0 0 18px rgba(0, 243, 255, 0.5));
+      transition: opacity 0.22s ease-in-out, filter 0.35s ease;
+    }
+    .avatar-holo-img.active {
+      opacity: 1;
+      visibility: visible;
+    }
+    .avatar-video-stage.talking .avatar-holo-img.active {
+      filter: drop-shadow(0 0 28px rgba(0, 243, 255, 0.9));
+    }
+    .avatar-video-stage.thinking .avatar-holo-img.active {
+      filter: drop-shadow(0 0 26px rgba(255, 170, 0, 0.8));
+    }
+    .avatar-video-stage.listening .avatar-holo-img.active {
+      filter: drop-shadow(0 0 26px rgba(0, 255, 170, 0.85));
+    }
+
+    /* Ambient Dynamic Lighting Aura */
+    .avatar-lighting-aura {
+      position: absolute;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0, 243, 255, 0.35) 0%, rgba(0, 140, 255, 0.15) 50%, transparent 75%);
+      filter: blur(22px);
+      z-index: 4;
+      pointer-events: none;
+      transition: all 0.4s ease;
+      animation: aura-breathe 2.8s ease-in-out infinite alternate;
+    }
+    @keyframes aura-breathe {
+      0% { transform: scale(0.92); opacity: 0.7; }
+      100% { transform: scale(1.1); opacity: 1.0; }
+    }
+
+    /* Concentric Rotating Cyber Holographic Lighting Rings */
+    .avatar-lighting-ring {
+      position: absolute;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 6;
+      transition: all 0.4s ease;
+    }
+    .avatar-lighting-ring.outer-ring {
+      width: 270px;
+      height: 270px;
+      border: 1px dashed rgba(0, 243, 255, 0.45);
+      box-shadow: 0 0 16px rgba(0, 243, 255, 0.2), inset 0 0 16px rgba(0, 243, 255, 0.15);
+      animation: spin-clockwise 24s linear infinite;
+    }
+    .avatar-lighting-ring.inner-ring {
+      width: 220px;
+      height: 220px;
+      border: 1.5px solid rgba(0, 243, 255, 0.3);
+      border-top-color: var(--glow-cyan);
+      border-bottom-color: var(--glow-cyan);
+      box-shadow: 0 0 20px rgba(0, 243, 255, 0.35);
+      animation: spin-counter 15s linear infinite;
+    }
+    @keyframes spin-clockwise { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes spin-counter { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
+
+    /* Lighting state themes: Talking, Thinking, Listening, Idle */
+    .avatar-video-stage.talking .avatar-lighting-aura {
+      background: radial-gradient(circle, rgba(0, 243, 255, 0.55) 0%, rgba(0, 130, 255, 0.3) 50%, transparent 75%);
+      filter: blur(24px);
+      animation: aura-talk-pulse 0.45s ease-in-out infinite alternate;
+    }
+    .avatar-video-stage.talking #avatar-chroma-canvas {
+      filter: drop-shadow(0 0 26px rgba(0, 243, 255, 0.85));
+    }
+    .avatar-video-stage.talking .outer-ring {
+      border-color: rgba(0, 243, 255, 0.85);
+      box-shadow: 0 0 25px rgba(0, 243, 255, 0.7);
+    }
+    @keyframes aura-talk-pulse {
+      0% { transform: scale(1.0); opacity: 0.85; }
+      100% { transform: scale(1.18); opacity: 1.0; }
+    }
+
+    .avatar-video-stage.thinking .avatar-lighting-aura {
+      background: radial-gradient(circle, rgba(255, 170, 0, 0.48) 0%, rgba(190, 0, 255, 0.25) 50%, transparent 75%);
+      filter: blur(26px);
+      animation: aura-think-pulse 1.6s ease-in-out infinite alternate;
+    }
+    .avatar-video-stage.thinking #avatar-chroma-canvas {
+      filter: drop-shadow(0 0 24px rgba(255, 170, 0, 0.75));
+    }
+    .avatar-video-stage.thinking .outer-ring {
+      border-color: rgba(255, 170, 0, 0.7);
+      box-shadow: 0 0 25px rgba(255, 170, 0, 0.5);
+    }
+    @keyframes aura-think-pulse {
+      0% { transform: scale(0.94); opacity: 0.7; }
+      100% { transform: scale(1.14); opacity: 1.0; }
+    }
+
+    .avatar-video-stage.listening .avatar-lighting-aura {
+      background: radial-gradient(circle, rgba(0, 255, 170, 0.5) 0%, rgba(0, 243, 255, 0.25) 50%, transparent 75%);
+      filter: blur(24px);
+      animation: aura-listen-pulse 0.85s ease-in-out infinite alternate;
+    }
+    .avatar-video-stage.listening #avatar-chroma-canvas {
+      filter: drop-shadow(0 0 24px rgba(0, 255, 170, 0.75));
+    }
+    .avatar-video-stage.listening .outer-ring {
+      border-color: rgba(0, 255, 170, 0.8);
+      box-shadow: 0 0 25px rgba(0, 255, 170, 0.55);
+    }
+    @keyframes aura-listen-pulse {
+      0% { transform: scale(0.97); opacity: 0.75; }
+      100% { transform: scale(1.16); opacity: 1.0; }
+    }
+
+    /* Avatar Status Tag */
+    .avatar-tag-badge {
+      position: absolute;
+      bottom: -4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 12px;
+      border-radius: 12px;
+      background: rgba(6, 18, 38, 0.94);
+      border: 1px solid rgba(0, 243, 255, 0.45);
+      font-size: 9.5px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      color: var(--glow-cyan);
+      box-shadow: 0 0 14px rgba(0, 243, 255, 0.35);
+      z-index: 12;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .avatar-pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--glow-cyan);
+      box-shadow: 0 0 8px var(--glow-cyan);
+      animation: dot-pulse 1s ease-in-out infinite alternate;
+    }
+    @keyframes dot-pulse { from { opacity: 0.4; transform: scale(0.8); } to { opacity: 1; transform: scale(1.2); } }
+
+    /* Avatar State Toolbar */
+    .avatar-state-toolbar {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      justify-content: center;
+      margin-top: 4px;
+      z-index: 15;
+    }
+    .avatar-btn {
+      background: rgba(0, 243, 255, 0.08);
+      border: 1px solid rgba(0, 243, 255, 0.25);
+      color: var(--text-dim);
+      font-size: 9.5px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      padding: 3px 11px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .avatar-btn:hover, .avatar-btn.active {
+      background: rgba(0, 243, 255, 0.24);
+      border-color: var(--glow-cyan);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(0, 243, 255, 0.4);
+    }
+
+    /* Animated Frequency Equalizer Waveform */
+    .wave-wrap {
+      display: flex; gap: 3px; align-items: center; justify-content: center; height: 32px; width: 100%; margin-top: 10px;
+    }
+    .wave-bar {
+      width: 3.5px; border-radius: 2px; background: linear-gradient(180deg, var(--glow-cyan), var(--glow-blue));
+      box-shadow: 0 0 8px var(--glow-cyan); animation: wave-pulse 1.3s ease-in-out infinite alternate;
+    }
+    @keyframes wave-pulse { 0% { height: 4px; } 100% { height: 28px; } }
+
+    /* ── DYNAMIC GENERATIVE HUD STAGE ── */
+    #dynamic-hud-stage {
+      display: none; position: absolute; inset: 10px 10px 75px 10px; z-index: 20;
+      background: rgba(4, 16, 34, 0.96); border: 1.5px solid var(--glow-cyan);
+      clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
+      box-shadow: 0 0 35px rgba(0, 243, 255, 0.4), inset 0 0 20px rgba(0, 243, 255, 0.1);
+      border-radius: 8px; padding: 14px 18px; flex-direction: column; gap: 10px;
+      backdrop-filter: blur(12px); animation: stage-appear 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes stage-appear {
+      from { opacity: 0; transform: scale(0.92); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .stage-hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid rgba(0, 243, 255, 0.25); padding-bottom: 8px;
+    }
+    .stage-title {
+      display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 900;
+      letter-spacing: 2.5px; color: var(--glow-cyan); text-transform: uppercase;
+    }
+    .stage-ctrls {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .stage-btn {
+      background: rgba(0, 243, 255, 0.08); border: 1px solid rgba(0, 243, 255, 0.3);
+      color: var(--glow-cyan); font-size: 10px; font-weight: 800; padding: 4px 10px; border-radius: 4px;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .stage-btn:hover { background: var(--glow-cyan); color: #000; box-shadow: 0 0 10px var(--glow-cyan); }
+    .stage-btn-close {
+      background: rgba(255, 51, 102, 0.12); border-color: rgba(255, 51, 102, 0.4); color: var(--accent-red);
+    }
+    .stage-btn-close:hover { background: var(--accent-red); color: #000; box-shadow: 0 0 10px var(--accent-red); }
+
+    .stage-body {
+      flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px;
+    }
+    .stage-body::-webkit-scrollbar { width: 4px; }
+    .stage-body::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 2px; }
+
+    /* Bar Graph UI */
+    .bargraph-wrap { display: flex; flex-direction: column; gap: 10px; width: 100%; margin: auto 0; }
+    .bargraph-row { display: flex; flex-direction: column; gap: 4px; }
+    .bargraph-meta { display: flex; justify-content: space-between; font-size: 11px; font-weight: bold; }
+    .bargraph-meta span:first-child { color: var(--text-dim); }
+    .bargraph-meta span:last-child { color: var(--glow-cyan); text-shadow: 0 0 6px var(--glow-cyan); }
+    .bargraph-track { height: 14px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; border: 1px solid rgba(0,243,255,0.15); }
+    .bargraph-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--glow-blue), var(--glow-cyan)); transition: width 0.6s ease; box-shadow: 0 0 12px var(--glow-cyan); }
+
+    /* Search Result UI */
+    .search-result-box {
+      background: rgba(0, 243, 255, 0.04); border: 1px solid rgba(0, 243, 255, 0.2);
+      border-radius: 6px; padding: 12px 14px; font-size: 12px; line-height: 1.6; color: #eaf8ff;
+    }
+    .search-query-badge {
+      display: inline-block; font-size: 10px; font-weight: bold; color: var(--glow-cyan);
+      background: rgba(0, 243, 255, 0.12); padding: 3px 8px; border-radius: 4px; margin-bottom: 8px;
+    }
+
+    /* ── CENTER QUICK LAUNCH DOCK ── */
+    .dock-bar {
+      margin-top: 10px; display: flex; gap: 8px; background: rgba(6, 18, 38, 0.92);
+      border: 1px solid var(--panel-border); border-radius: 10px; padding: 6px 14px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.6); align-items: center; justify-content: center; max-width: 95%; flex-wrap: wrap;
+    }
+    .dock-btn {
+      font-size: 17px; cursor: pointer; transition: all 0.18s; display: flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: 6px; background: rgba(255,255,255,0.05); border: 1px solid rgba(0, 243, 255, 0.18);
+      flex-shrink: 0;
+    }
+    .dock-btn:hover {
+      transform: translateY(-3px) scale(1.12); background: var(--dim-cyan); border-color: var(--glow-cyan);
+      box-shadow: 0 0 10px var(--glow-cyan);
+    }
+    .dock-divider { width: 1px; height: 20px; background: rgba(0, 243, 255, 0.2); margin: 0 4px; flex-shrink: 0; }
+    .dock-pill {
+      font-size: 9.5px; font-weight: 800; letter-spacing: 1px; padding: 6px 10px; border-radius: 6px;
+      background: rgba(0, 243, 255, 0.08); border: 1px solid rgba(0, 243, 255, 0.25);
+      color: var(--glow-cyan); cursor: pointer; transition: all 0.2s; white-space: nowrap; flex-shrink: 0;
+    }
+    .dock-pill:hover { background: var(--glow-cyan); color: #000; box-shadow: 0 0 10px var(--glow-cyan); }
+
+    /* ── RIGHT COLUMN: ACTIVITY LOG, CODING FILE UPLOAD & CONTROLS ── */
+    .col-right { display: flex; flex-direction: column; gap: 10px; }
+
+    /* Activity log */
+    .log-box {
+      flex: 1; min-height: 160px; max-height: 240px; overflow-y: auto; display: flex; flex-direction: column;
+      gap: 5px; font-size: 11px; line-height: 1.45; padding-right: 4px;
+    }
+    .log-box::-webkit-scrollbar { width: 3px; }
+    .log-box::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 2px; }
+    .log-entry { padding: 4px 8px; border-radius: 4px; word-break: break-word; }
+    .log-entry.sys { color: var(--glow-cyan); border-left: 2px solid var(--glow-cyan); background: rgba(0, 243, 255, 0.05); }
+    .log-entry.jarvis { color: #bdf6ff; border-left: 2px solid var(--accent-green); background: rgba(0, 255, 170, 0.05); }
+    .log-entry.user { color: #fff; border-left: 2px solid #ff7ab6; background: rgba(255, 255, 255, 0.05); align-self: flex-end; }
+
+    /* Coding & Project File Upload Zone */
+    .upload-container { display: flex; flex-direction: column; gap: 8px; }
+    .drop-zone {
+      border: 1.5px dashed var(--panel-border); border-radius: 6px; padding: 12px 10px; text-align: center;
+      background: rgba(0, 243, 255, 0.03); cursor: pointer; transition: all 0.2s;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: var(--glow-cyan); background: var(--dim-cyan); }
+    .drop-zone-icon { font-size: 22px; margin-bottom: 3px; color: var(--glow-cyan); text-shadow: 0 0 8px var(--glow-cyan); }
+    .drop-zone-txt { font-size: 10px; font-weight: 700; color: var(--text-bright); }
+    .drop-zone-sub { font-size: 9px; color: var(--text-dim); margin-top: 2px; }
+
+    .file-quick-btns { display: flex; gap: 6px; }
+    .btn-file-choice {
+      flex: 1; padding: 6px 4px; border-radius: 5px; font-size: 9.5px; font-weight: 700;
+      background: rgba(0, 243, 255, 0.07); border: 1px solid rgba(0, 243, 255, 0.25);
+      color: var(--glow-cyan); cursor: pointer; transition: all 0.2s; text-align: center;
+    }
+    .btn-file-choice:hover { background: var(--glow-cyan); color: #000; box-shadow: 0 0 10px var(--glow-cyan); }
+
+    /* Active Uploaded File Banner */
+    .file-active-badge {
+      display: none; background: rgba(0, 255, 170, 0.1); border: 1px solid rgba(0, 255, 170, 0.35);
+      border-radius: 5px; padding: 5px 8px; font-size: 10px; color: var(--accent-green);
+      align-items: center; justify-content: space-between;
+    }
+
+    /* Quick action buttons (Interrupt, Mic) */
+    .action-row { display: flex; gap: 8px; margin-top: 2px; }
+    .act-btn {
+      flex: 1; padding: 9px 8px; border-radius: 6px; font-size: 10.5px; font-weight: 800; letter-spacing: 1px;
+      cursor: pointer; border: 1px solid transparent; transition: all 0.2s; text-align: center;
+    }
+    .act-btn-interrupt { background: rgba(255, 51, 102, 0.15); border-color: rgba(255, 51, 102, 0.5); color: var(--accent-red); }
+    .act-btn-interrupt:hover { background: var(--accent-red); color: #000; box-shadow: 0 0 14px var(--accent-red); }
+    .act-btn-mic { background: rgba(0, 255, 170, 0.15); border-color: rgba(0, 255, 170, 0.5); color: var(--accent-green); }
+    .act-btn-mic:hover { background: var(--accent-green); color: #000; box-shadow: 0 0 14px var(--accent-green); }
+    .act-btn-mic.muted { background: rgba(255, 51, 102, 0.15); border-color: rgba(255, 51, 102, 0.5); color: var(--accent-red); }
+    .act-btn-mic.muted:hover { background: var(--accent-red); color: #000; box-shadow: 0 0 14px var(--accent-red); }
+
+    /* ── BOTTOM TRANSMISSION FOOTER WITH INTERACTIVE TABS ── */
+    footer {
+      display: flex; align-items: center; gap: 10px; height: 48px;
+      background: rgba(4, 14, 30, 0.94); border: 1px solid var(--panel-border);
+      border-radius: 8px; padding: 0 14px; box-shadow: 0 0 18px rgba(0, 243, 255, 0.12); flex-shrink: 0;
+    }
+    .foot-tabs-wrap {
+      display: flex; align-items: center; gap: 5px; flex-shrink: 0; flex-wrap: nowrap;
+    }
+    .nav-tab-pill {
+      background: rgba(0, 243, 255, 0.06); border: 1px solid rgba(0, 243, 255, 0.25);
+      color: var(--text-dim); padding: 5px 10px; border-radius: 5px; font-size: 10px;
+      font-weight: 800; letter-spacing: 1px; cursor: pointer; transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .nav-tab-pill:hover {
+      background: var(--dim-cyan); color: var(--glow-cyan); border-color: var(--glow-cyan);
+      box-shadow: 0 0 8px rgba(0, 243, 255, 0.35);
+    }
+    .nav-tab-pill.active {
+      background: var(--glow-cyan); color: #000; border-color: var(--glow-cyan);
+      box-shadow: 0 0 12px var(--glow-cyan); font-weight: 900;
+    }
+    #chat-inp {
+      flex: 1; background: rgba(0, 13, 24, 0.85); border: 1px solid var(--panel-border);
+      border-radius: 6px; padding: 8px 12px; color: #fff; font-size: 12.5px; outline: none;
+    }
+    #chat-inp:focus { border-color: var(--glow-cyan); box-shadow: 0 0 10px rgba(0, 243, 255, 0.35); }
+    #chat-inp::placeholder { color: var(--text-muted); }
+    .btn-transmit {
+      background: var(--dim-cyan); border: 1px solid var(--panel-border); color: var(--glow-cyan);
+      border-radius: 6px; padding: 8px 18px; font-size: 11px; font-weight: 800; letter-spacing: 1px;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .btn-transmit:hover { background: var(--glow-cyan); color: #000; box-shadow: 0 0 12px var(--glow-cyan); }
+
+    /* ── CYBER FLOATING DRAWERS (SETTINGS & CONTROLS) ── */
+    .cyber-drawer {
+      display: none;
+      position: fixed;
+      top: 56px;
+      z-index: 9999;
+      background: rgba(3, 10, 24, 0.97);
+      border: 1.5px solid var(--glow-cyan);
+      border-radius: 8px;
+      box-shadow: 0 0 35px rgba(0, 243, 255, 0.45), inset 0 0 20px rgba(0, 243, 255, 0.1);
+      backdrop-filter: blur(18px);
+      flex-direction: column;
+      gap: 10px;
+      padding: 14px 16px;
+      color: #eaf8ff;
+      animation: drawer-drop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      max-height: calc(100vh - 75px);
+      overflow-y: auto;
+    }
+    @keyframes drawer-drop {
+      from { opacity: 0; transform: translateY(-12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .cyber-drawer::-webkit-scrollbar { width: 4px; }
+    .cyber-drawer::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 2px; }
+
+    #cyber-settings-drawer { left: 16px; width: 340px; }
+    #cyber-controls-drawer { left: 62px; width: 300px; }
+
+    .drawer-header {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid rgba(0, 243, 255, 0.25);
+      padding-bottom: 8px; font-size: 11px; font-weight: 900; letter-spacing: 2px;
+      color: var(--glow-cyan); text-transform: uppercase;
+    }
+    .drawer-close-btn {
+      background: transparent; border: none; color: var(--text-dim); cursor: pointer;
+      font-size: 12px; font-weight: bold; transition: color 0.15s;
+    }
+    .drawer-close-btn:hover { color: var(--accent-red); }
+
+    .drawer-section-title {
+      font-size: 9px; font-weight: 800; letter-spacing: 1.5px; color: var(--accent-orange);
+      text-transform: uppercase; margin-top: 4px;
+    }
+    .drawer-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px;
+    }
+    .drawer-input {
+      flex: 1; background: rgba(0, 13, 26, 0.9); border: 1px solid var(--panel-border);
+      border-radius: 4px; color: #fff; padding: 5px 8px; font-family: monospace; font-size: 11px;
+    }
+    .drawer-input:focus { border-color: var(--glow-cyan); outline: none; }
+    .drawer-btn {
+      background: rgba(0, 243, 255, 0.08); border: 1px solid rgba(0, 243, 255, 0.3);
+      color: var(--glow-cyan); font-size: 10px; font-weight: 800; padding: 6px 10px;
+      border-radius: 4px; cursor: pointer; transition: all 0.15s; text-align: left;
+      display: flex; align-items: center; justify-content: space-between; width: 100%;
+    }
+    .drawer-btn:hover { background: var(--glow-cyan); color: #000; box-shadow: 0 0 10px var(--glow-cyan); }
+    .drawer-pill-group {
+      display: flex; gap: 5px; flex-wrap: wrap; margin-top: 2px;
+    }
+    .drawer-pill {
+      font-size: 9.5px; font-weight: bold; padding: 4px 8px; border-radius: 4px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(0,243,255,0.2);
+      color: var(--text-dim); cursor: pointer; transition: all 0.15s;
+    }
+    .drawer-pill:hover, .drawer-pill.active {
+      background: var(--glow-cyan); color: #000; border-color: var(--glow-cyan);
+    }
+
+    /* ── BREATHING AMBIENT GLOW ANIMATION ── */
+    @keyframes cyber-glow-pulse {
+      0%, 100% {
+        box-shadow: 0 0 16px rgba(0, 243, 255, 0.14), inset 0 0 10px rgba(0, 243, 255, 0.05);
+        border-color: rgba(0, 243, 255, 0.32);
+      }
+      50% {
+        box-shadow: 0 0 26px rgba(0, 243, 255, 0.28), inset 0 0 18px rgba(0, 243, 255, 0.12);
+        border-color: rgba(0, 243, 255, 0.55);
+      }
+    }
+    .panel, .panel-systems { animation: cyber-glow-pulse 5s ease-in-out infinite; }
+
+    /* ── SCANLINE BEAM ── */
+    @keyframes scanline-beam-sweep {
+      0% { top: -100px; opacity: 0; }
+      15% { opacity: 0.18; }
+      85% { opacity: 0.18; }
+      100% { top: 100vh; opacity: 0; }
+    }
+    .hud-scanline-beam {
+      position: fixed; left: 0; right: 0; height: 90px;
+      background: linear-gradient(180deg, transparent, rgba(0, 243, 255, 0.12), transparent);
+      pointer-events: none; z-index: 999; animation: scanline-beam-sweep 9s linear infinite;
+    }
+
+    /* ── ASSISTANT DECK & CARDS ── */
+    .asst-cards-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin-top: 10px;
+      max-height: calc(100vh - 270px); overflow-y: auto; padding-right: 4px;
+    }
+    .asst-card {
+      background: rgba(4, 18, 38, 0.9); border: 1.5px solid rgba(0, 243, 255, 0.25);
+      border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px;
+      transition: all 0.25s ease; position: relative; overflow: hidden;
+    }
+    .asst-card:hover {
+      transform: translateY(-3px); border-color: var(--card-color, var(--glow-cyan));
+      box-shadow: 0 6px 20px rgba(0, 243, 255, 0.22);
+    }
+    .asst-card.active {
+      border-color: var(--card-color, var(--glow-cyan));
+      box-shadow: 0 0 24px var(--card-glow, rgba(0, 243, 255, 0.4));
+      background: rgba(2, 28, 55, 0.95);
+    }
+    .asst-card-badge {
+      display: inline-flex; align-items: center; gap: 5px; font-size: 8.5px; font-weight: 800;
+      padding: 2px 7px; border-radius: 10px; width: fit-content; text-transform: uppercase;
+    }
+    .asst-btn-switch {
+      background: rgba(0, 243, 255, 0.12); border: 1px solid var(--card-color, var(--glow-cyan));
+      color: var(--card-color, var(--glow-cyan)); font-size: 9.5px; font-weight: 800; padding: 5px 10px;
+      border-radius: 4px; cursor: pointer; transition: all 0.2s; text-align: center;
+    }
+    .asst-btn-switch:hover {
+      background: var(--card-color, var(--glow-cyan)); color: #000; box-shadow: 0 0 12px var(--card-color, var(--glow-cyan));
+    }
+    .asst-creator-form {
+      display: flex; flex-direction: column; gap: 8px; background: rgba(0, 16, 32, 0.85);
+      border: 1px solid var(--panel-border); border-radius: 6px; padding: 12px; margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="hud-bg"></div>
+  <div class="hud-scanline-beam"></div>
+
+  <div id="hud-container">
+    <!-- TOP HEADER -->
+    <header>
+      <div class="hud-brand-wrap">
+        <div class="hud-brand">
+          JARVIS <small>MARK LVI</small>
+        </div>
+
+        <div class="hud-tech-btns">
+          <button class="tech-box-btn" title="Setup & Settings" onclick="toggleSettingsDrawer(event)">
+            <svg viewBox="0 0 24 24" class="tech-btn-svg"><path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+          </button>
+          <button class="tech-box-btn" title="Everyday Controls" onclick="toggleControlsDrawer(event)">
+            <svg viewBox="0 0 24 24" class="tech-btn-svg"><path fill="currentColor" d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="header-center-intel">
+        <div class="hdr-wave-pulse">
+          <div class="hdr-wave-bar" style="animation-delay: 0.1s;"></div>
+          <div class="hdr-wave-bar" style="animation-delay: 0.3s;"></div>
+          <div class="hdr-wave-bar" style="animation-delay: 0.5s;"></div>
+          <div class="hdr-wave-bar" style="animation-delay: 0.2s;"></div>
+          <div class="hdr-wave-bar" style="animation-delay: 0.4s;"></div>
+        </div>
+        <span>QUANTUM NEURAL INTERFACE // MARK LVI ACTIVE</span>
+        <div class="hdr-wave-pulse">
+          <div class="hdr-wave-bar" style="animation-delay: 0.4s;"></div>
+          <div class="hdr-wave-bar" style="animation-delay: 0.2s;"></div>
+          <div class="hdr-wave-bar" style="animation-delay: 0.5s;"></div>
+          <div class="hdr-wave-bar" style="animation-delay: 0.3s;"></div>
+          <div class="hdr-wave-bar" style="animation-delay: 0.1s;"></div>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <div class="status-pill">
+          <span class="status-dot"></span>
+          <span id="st-pill-text">SYSTEM ONLINE</span>
+        </div>
+        <div class="clock-text" id="live-clock">00:00:00</div>
+      </div>
+    </header>
+
+    <!-- CYBER FLOATING SETTINGS DRAWER -->
+    <div id="cyber-settings-drawer" class="cyber-drawer">
+      <div class="drawer-header">
+        <span>◈ SETUP & SYSTEM SETTINGS</span>
+        <button class="drawer-close-btn" onclick="toggleSettingsDrawer()">✕</button>
+      </div>
+
+      <div class="drawer-section-title">ASSISTANT IDENTITY</div>
+      <div class="drawer-row">
+        <input type="text" id="drawer-asst-name" class="drawer-input" placeholder="Assistant Name (e.g. FRIDAY)">
+        <button class="drawer-btn" style="width: auto; padding: 5px 12px;" onclick="saveDrawerIdentity()">SAVE</button>
+      </div>
+      <div class="drawer-row" style="margin-top: 4px;">
+        <input type="text" id="drawer-user-name" class="drawer-input" placeholder="Your Name (e.g. sir / Tony)">
+        <button class="drawer-btn" style="width: auto; padding: 5px 12px;" onclick="saveDrawerIdentity()">SAVE</button>
+      </div>
+
+      <div class="drawer-section-title">VOICE PRESET</div>
+      <div class="drawer-pill-group" id="drawer-voice-pills">
+        <div class="drawer-pill" data-voice="ElevenLabs" onclick="pickDrawerVoice('ElevenLabs')">✨ ElevenLabs (GF Voice)</div>
+        <div class="drawer-pill active" data-voice="Leda" onclick="pickDrawerVoice('Leda')">Leda (Sweet Female)</div>
+        <div class="drawer-pill" data-voice="Aoede" onclick="pickDrawerVoice('Aoede')">Aoede (Warm)</div>
+        <div class="drawer-pill" data-voice="Zephyr" onclick="pickDrawerVoice('Zephyr')">Zephyr (Bright)</div>
+        <div class="drawer-pill" data-voice="Kore" onclick="pickDrawerVoice('Kore')">Kore (Calm)</div>
+        <div class="drawer-pill" data-voice="Puck" onclick="pickDrawerVoice('Puck')">Puck (Playful)</div>
+        <div class="drawer-pill" data-voice="Charon" onclick="pickDrawerVoice('Charon')">Charon (Male)</div>
+        <div class="drawer-pill" data-voice="Fenrir" onclick="pickDrawerVoice('Fenrir')">Fenrir (Male)</div>
+      </div>
+
+      <div id="drawer-elevenlabs-box" style="display: none; margin-top: 6px; background: rgba(0, 243, 255, 0.05); padding: 8px; border-radius: 4px; border: 1px solid rgba(0, 243, 255, 0.2);">
+        <div style="font-size: 9px; color: var(--glow-cyan); margin-bottom: 4px; font-weight: bold;">ELEVENLABS VOICE ID (GIRLFRIEND / SOFT VOICE)</div>
+        <div class="drawer-row">
+          <input type="text" id="drawer-el-vid" class="drawer-input" value="RDWdsTU6N02BFftbIEAp" placeholder="RDWdsTU6N02BFftbIEAp">
+          <button class="drawer-btn" style="width: auto; padding: 4px 10px;" onclick="testDashboardVoice('ElevenLabs')">▶ TEST VOICE</button>
+        </div>
+      </div>
+
+      <div class="drawer-section-title">SYSTEM PANELS & TOOLS</div>
+      <button class="drawer-btn" onclick="openAssistantsDeck()" style="border-color: #ff3366; color: #ff3366;">🤖 AI ASSISTANTS & CREATOR DECK <span>▸</span></button>
+      <button class="drawer-btn" onclick="dispatchBridge('openProviders')">🔑 GEMINI API KEY & PROVIDERS <span>▸</span></button>
+      <button class="drawer-btn" onclick="dispatchBridge('openAudioDevices')">🎧 AUDIO DEVICES & MIC <span>▸</span></button>
+      <button class="drawer-btn" onclick="switchTab('phone')">📱 PHONE LINK & QR PAIR <span>▸</span></button>
+      <button class="drawer-btn" onclick="dispatchBridge('openAISettings')">✨ ADVANCED AI CONFIG (260ms Latency) <span>▸</span></button>
+      <button class="drawer-btn" onclick="dispatchBridge('openVoiceLock')">🎙 VOICE LOCK & WAKE WORD <span>▸</span></button>
+      <button class="drawer-btn" onclick="dispatchBridge('openMemory')">🧠 MEMORY & KNOWLEDGE STORE <span>▸</span></button>
+      <button class="drawer-btn" onclick="dispatchBridge('openPlugins')">🧩 PLUGIN MANAGER <span>▸</span></button>
+      <button class="drawer-btn" onclick="dispatchBridge('openCustomize')">🎨 THEME PALETTE & UI WHEEL <span>▸</span></button>
+    </div>
+
+    <!-- CYBER FLOATING CONTROLS DRAWER -->
+    <div id="cyber-controls-drawer" class="cyber-drawer">
+      <div class="drawer-header">
+        <span>◈ EVERYDAY CONTROLS</span>
+        <button class="drawer-close-btn" onclick="toggleControlsDrawer()">✕</button>
+      </div>
+
+      <button class="drawer-btn" onclick="toggleFullscreenHud()">⛶ TOGGLE FULLSCREEN [F11] <span>ENTER</span></button>
+      <button class="drawer-btn" onclick="sendDirective('toggle wake word')">🎙 WAKE WORD: HELLO FRIDAY <span>TOGGLE</span></button>
+      <button class="drawer-btn" onclick="sendDirective('toggle push to talk')">🔴 PUSH-TO-TALK MODE <span>TOGGLE</span></button>
+      <button class="drawer-btn" onclick="sendDirective('cycle listening mode')">🔄 LISTENING MODE <span>CYCLE</span></button>
+      <button class="drawer-btn" onclick="sendDirective('voice lock')">🔒 VOICE LOCK ISOLATION <span>SET</span></button>
+      <button class="drawer-btn" onclick="sendDirective('raaz mode')">🤫 RAAZ / PRIVATE MODE <span>TOGGLE</span></button>
+      <button class="drawer-btn" onclick="toggleMicButtonState()">🔇 MUTE / UNMUTE MIC <span>TAP</span></button>
+    </div>
+
+    <!-- MAIN BODY GRID -->
+    <div class="main-grid">
+      
+      <!-- LEFT COLUMN -->
+      <div class="col-left">
+        <!-- Date & Calendar -->
+        <div class="panel">
+          <div class="panel-hdr">DATE & TIME <small id="cal-month">NOV 2026</small></div>
+          <div class="calendar-wrap">
+            <div class="cal-date-big" id="cal-day">20<small id="cal-weekday">FRI</small></div>
+            <div class="cal-grid" id="cal-mini-grid"></div>
+          </div>
+        </div>
+
+        <!-- SYSTEMS & TASKS SWITCHABLE PANEL -->
+        <div class="panel-systems">
+          <div class="sys-hdr">
+            <div class="sys-title">
+              <span class="sys-bar-orange"></span>
+              <span id="left-panel-title">SYSTEMS</span>
+            </div>
+            <div class="sys-tab-switcher">
+              <button class="sys-pill-btn active" id="tab-pill-systems" onclick="switchLeftPanel('systems')">SYSTEMS</button>
+              <button class="sys-pill-btn" id="tab-pill-tasks" onclick="switchLeftPanel('tasks')">TASKS</button>
+            </div>
+          </div>
+
+          <!-- 1. SYSTEMS VIEW (2x2 Circular Gauges) -->
+          <div class="sys-dials-grid" id="view-systems">
+            <div class="sys-dial-item">
+              <div class="dial-svg-wrap">
+                <svg viewBox="0 0 100 100" class="dial-svg">
+                  <g class="dial-ticks" id="ticks-cpu"></g>
+                  <path class="dial-track" d="M 19 68 A 34.5 34.5 0 1 1 81 68" />
+                  <path class="dial-progress" id="dial-cpu-arc" d="M 19 68 A 34.5 34.5 0 1 1 81 68" />
+                </svg>
+                <div class="dial-val" id="dial-cpu-txt">29%</div>
+              </div>
+              <div class="dial-lbl" id="dial-cpu-lbl">CPU</div>
+            </div>
+
+            <div class="sys-dial-item">
+              <div class="dial-svg-wrap">
+                <svg viewBox="0 0 100 100" class="dial-svg">
+                  <g class="dial-ticks" id="ticks-mem"></g>
+                  <path class="dial-track" d="M 19 68 A 34.5 34.5 0 1 1 81 68" />
+                  <path class="dial-progress warn" id="dial-mem-arc" d="M 19 68 A 34.5 34.5 0 1 1 81 68" />
+                </svg>
+                <div class="dial-val" id="dial-mem-txt">93%</div>
+              </div>
+              <div class="dial-lbl warn" id="dial-mem-lbl">MEMORY</div>
+            </div>
+
+            <div class="sys-dial-item">
+              <div class="dial-svg-wrap">
+                <svg viewBox="0 0 100 100" class="dial-svg">
+                  <g class="dial-ticks" id="ticks-gpu"></g>
+                  <path class="dial-track" d="M 19 68 A 34.5 34.5 0 1 1 81 68" />
+                  <path class="dial-progress" id="dial-gpu-arc" d="M 19 68 A 34.5 34.5 0 1 1 81 68" />
+                </svg>
+                <div class="dial-val" id="dial-gpu-txt">N/A</div>
+              </div>
+              <div class="dial-lbl" id="dial-gpu-lbl">GPU</div>
+            </div>
+
+            <div class="sys-dial-item">
+              <div class="dial-svg-wrap">
+                <svg viewBox="0 0 100 100" class="dial-svg">
+                  <g class="dial-ticks" id="ticks-tmp"></g>
+                  <path class="dial-track" d="M 19 68 A 34.5 34.5 0 1 1 81 68" />
+                  <path class="dial-progress" id="dial-tmp-arc" d="M 19 68 A 34.5 34.5 0 1 1 81 68" />
+                </svg>
+                <div class="dial-val" id="dial-tmp-txt">N/A</div>
+              </div>
+              <div class="dial-lbl" id="dial-tmp-lbl">TEMP</div>
+            </div>
+          </div>
+
+          <!-- 2. TASKS VIEW -->
+          <div class="tasks-view-wrap" id="view-tasks">
+            <div style="display: flex; justify-content: flex-end; margin-bottom: 4px;">
+              <button class="btn-routines" onclick="triggerRoutinesCmd()">ROUTINES</button>
+            </div>
+            <div class="tasks-list-content" id="tasks-feed-box">
+              <div class="tasks-empty-hint" id="tasks-empty-msg">No background tasks yet.</div>
+            </div>
+            <div class="task-add-row">
+              <input type="text" class="task-inp-mini" id="quick-task-inp" placeholder="Add task directive…">
+              <button class="btn-add-task" onclick="submitQuickTask()">+ ADD</button>
+            </div>
+          </div>
+
+          <div class="panel-hdr" style="margin-top: 8px;">NET ACTIVITY <small id="lbl-net">0 KB/s</small></div>
+          <canvas class="sparkline" id="net-sparkline"></canvas>
+
+          <div class="ai-mod-card">
+            <div class="ai-mod-badge">✦ NEUTRAL (CYBER)</div>
+            <div>BRAIN: FAST 0ms · DB: 19F · 22C</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CENTER COLUMN: 3D HOLOGRAPHIC JARVIS NEURAL SPHERE (Image 1) -->
+      <div class="col-center">
+        
+        <!-- 3D Holographic Sphere Canvas & Core -->
+        <div class="reactor-container" id="reactor-center-box">
+          <canvas id="holo-sphere-canvas" width="440" height="390"></canvas>
+          
+          <!-- Holographic Transparent Video Avatar (Talking / Thinking / Listening) -->
+          <div class="avatar-video-stage listening" id="avatar-video-stage" title="FRIDAY Neural Avatar">
+            <!-- Hardware-accelerated Seamless Transparent Avatars (Zero-Glitch Preloaded) -->
+            <img id="avatar-img-talking" class="avatar-holo-img" src="./videos/talking_alpha.webp" alt="FRIDAY Talking">
+            <img id="avatar-img-thinking" class="avatar-holo-img" src="./videos/thinking_alpha.webp" alt="FRIDAY Thinking">
+            <img id="avatar-img-listening" class="avatar-holo-img active" src="./videos/lissing_alpha.webp" alt="FRIDAY Listening">
+
+            <!-- Hidden native video element loading current MP4 (fallback) -->
+            <video id="avatar-raw-video" src="./videos/thinking.mp4" playsinline muted loop crossorigin="anonymous" style="display:none;"></video>
+            
+            <!-- Real-time GPU/Canvas Chroma-Key Screen Surface with Transparent Background -->
+            <canvas id="avatar-chroma-canvas" width="280" height="330" style="display:none;"></canvas>
+            
+            <!-- Futuristic Cyber Lighting Rings & Hologram Glow -->
+            <div class="avatar-lighting-aura" id="avatar-lighting-aura"></div>
+            <div class="avatar-lighting-ring outer-ring"></div>
+            <div class="avatar-lighting-ring inner-ring"></div>
+
+            <!-- Floating Tech State Tag -->
+            <div class="avatar-tag-badge" id="avatar-tag-badge">
+              <span class="avatar-pulse-dot" id="avatar-dot"></span>
+              <span id="avatar-status-text">FRIDAY // THINKING</span>
+            </div>
+          </div>
+
+          <!-- Legacy core button kept hidden for compatibility -->
+          <div class="holo-center-core" id="reactor-core-btn" style="display:none;">
+            <div class="core-title">FRIDAY</div>
+            <div class="core-sub">NEURAL CORE</div>
+          </div>
+        </div>
+
+
+        <!-- DYNAMIC GENERATIVE HUD STAGE -->
+        <div id="dynamic-hud-stage">
+          <div class="stage-hdr">
+            <div class="stage-title">
+              <span style="color: var(--accent-orange); font-size: 15px;">◈</span>
+              <span id="stage-heading">HOLOGRAPHIC DATA VISUALIZER</span>
+            </div>
+            <div class="stage-ctrls">
+              <button class="stage-btn" id="stage-btn-modify" onclick="toggleEditCurrentWidget()">✎ MODIFY DATA</button>
+              <button class="stage-btn stage-btn-close" onclick="closeDynamicStage()">✕ DISMISS</button>
+            </div>
+          </div>
+          <div class="stage-body" id="stage-content-area"></div>
+        </div>
+
+        <!-- Real-time Animated Waveform -->
+        <div class="wave-wrap" id="audio-wave"></div>
+
+        <!-- Quick Launch App Dock with Clean Dynamic UI Triggers -->
+        <div class="dock-bar">
+          <div class="dock-btn" title="Chrome Browser" onclick="sendDirective('open chrome')">🌐</div>
+          <div class="dock-btn" title="VS Code Editor" onclick="sendDirective('open vs code')">💻</div>
+          <div class="dock-btn" title="Spotify Music" onclick="sendDirective('play music')">🎵</div>
+          <div class="dock-btn" title="File Explorer" onclick="sendDirective('open explorer')">📁</div>
+          <div class="dock-btn" title="Terminal" onclick="sendDirective('open terminal')">⚡</div>
+          <div class="dock-btn" title="Live Phone Mirror" onclick="switchTab('phone')">📱</div>
+          
+          <div class="dock-divider"></div>
+
+          <!-- AI Assistants Command Deck -->
+          <button class="dock-pill" style="border-color: #ff3366; color: #ff3366; font-weight: bold;" title="AI Assistants Deck & Multi-Persona Manager" onclick="openAssistantsDeck()">🤖 AI ASSISTANTS</button>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN: ACTIVITY LOG, CODING FILE UPLOAD & CONTROLS -->
+      <div class="col-right">
+        <!-- Activity Log -->
+        <div class="panel" style="flex: 1;">
+          <div class="panel-hdr">ACTIVITY LOG <small>REALTIME</small></div>
+          <div class="log-box" id="activity-log-feed">
+            <div class="log-entry sys">SYS: JARVIS Mark LVI online.</div>
+            <div class="log-entry jarvis">JARVIS: All modules operational and standing by.</div>
+          </div>
+        </div>
+
+        <!-- File Upload Dropzone & Coding File Buttons -->
+        <div class="panel upload-container">
+          <div class="panel-hdr">FILE & CODE UPLOAD <small>CODING / PROJECT</small></div>
+          
+          <div class="drop-zone" id="file-drop-target" onclick="browseCodeFiles()">
+            <div class="drop-zone-icon">⇪</div>
+            <div class="drop-zone-txt" id="drop-text-main">Drop Code File, Folder or Click to Browse</div>
+            <div class="drop-zone-sub">.py · .dart · .js · .json · .cpp · .html · Folders</div>
+          </div>
+
+          <div class="file-quick-btns">
+            <button class="btn-file-choice" onclick="browseCodeFiles()">⚡ BROWSE CODE FILES</button>
+            <button class="btn-file-choice" onclick="browseProjectFolder()">📁 OPEN PROJECT FOLDER</button>
+          </div>
+
+          <div class="file-active-badge" id="file-active-badge">
+            <span id="file-active-name">project.py</span>
+            <span style="cursor: pointer;" onclick="clearActiveFile()">✕</span>
+          </div>
+
+          <input type="file" id="hidden-file-input" style="display: none;" onchange="handleFileSelected(this)">
+        </div>
+
+        <!-- Action Controls: Mic & Interrupt -->
+        <div class="action-row">
+          <button class="act-btn act-btn-interrupt" onclick="sendInterrupt()">✋ INTERRUPT [ESC]</button>
+          <button class="act-btn act-btn-mic" id="btn-mic-toggle" onclick="toggleMicrophone()">🎙 MIC ACTIVE</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- BOTTOM COMMAND FOOTER WITH INTERACTIVE TABS WRAPPED -->
+    <footer>
+      <div class="foot-tabs-wrap">
+        <button class="nav-tab-pill active" id="tab-hud" onclick="switchTab('hud')">● HUD</button>
+        <button class="nav-tab-pill" id="tab-assistants" onclick="switchTab('assistants')">🤖 ASSISTANTS</button>
+        <button class="nav-tab-pill" id="tab-overview" onclick="switchTab('overview')">▦ OVERVIEW</button>
+        <button class="nav-tab-pill" id="tab-tasks" onclick="switchTab('tasks')">☑ TASKS</button>
+        <button class="nav-tab-pill" id="tab-brain" onclick="switchTab('brain')">◈ BRAIN</button>
+        <button class="nav-tab-pill" id="tab-mind" onclick="switchTab('mind')">☺ MIND</button>
+        <button class="nav-tab-pill" id="tab-phone" onclick="switchTab('phone')">📱 PHONE</button>
+      </div>
+      <input type="text" id="chat-inp" placeholder="Type a directive (e.g. 'show graph', 'search quantum', 'show tasks')…" autocomplete="off">
+      <button class="btn-transmit" onclick="submitDirective()">TRANSMIT ↵</button>
+    </footer>
+  </div>
+
+  <script>
+    // ── 3D HOLOGRAPHIC JARVIS NEURAL SPHERE ENGINE (Iron Man Movie Lab) ──────
+    (function initHoloSphere() {
+      const holoCanvas = document.getElementById('holo-sphere-canvas');
+      if (!holoCanvas) return;
+      const hctx = holoCanvas.getContext('2d');
+      const HW = holoCanvas.width;
+      const HH = holoCanvas.height;
+      const HCX = HW / 2;
+      const HCY = HH / 2;
+
+      // Theme toggle: 'gold' (Iron Man Lab look) or 'cyan' (Arc Reactor)
+      window.holoTheme = window.holoTheme || 'gold';
+
+      const N_NODES = 260;
+      const SPHERE_R = 126;
+      const nodes = [];
+
+      for (let i = 0; i < N_NODES; i++) {
+        const phi = Math.acos(1 - 2 * (i + 0.5) / N_NODES);
+        const theta = Math.PI * (1 + Math.sqrt(5)) * i;
+        nodes.push({
+          x: SPHERE_R * Math.sin(phi) * Math.cos(theta),
+          y: SPHERE_R * Math.sin(phi) * Math.sin(theta),
+          z: SPHERE_R * Math.cos(phi),
+          pulseOffset: Math.random() * Math.PI * 2,
+          size: Math.random() * 2.2 + 1.2
+        });
+      }
+
+      // 4 Multi-Axis Tilted Astrolabe & Gyroscope Rings (Iron Man Reference)
+      const gyroRings = [
+        { tiltX: 0.45, tiltZ: 0.35, speed: 0.013, r: 156, dots: 48, dashed: true, photons: [0, 2.09, 4.18] },
+        { tiltX: -0.65, tiltZ: -0.52, speed: -0.010, r: 142, dots: 36, dashed: false, photons: [1.0, 3.6] },
+        { tiltX: 0.18, tiltZ: 0.88, speed: 0.017, r: 168, dots: 56, dashed: true, photons: [0.6, 2.7, 4.9] },
+        { tiltX: 1.18, tiltZ: -0.42, speed: -0.019, r: 118, dots: 28, dashed: false, photons: [1.7, 4.2] }
+      ];
+
+      // 3D Wireframe Spherical Latitudes (Hologram Globe)
+      const sphereLatitudes = [0, 36, -36, 64, -64];
+
+      let rotX = 0.25;
+      let rotY = 0;
+      let rotZ = 0;
+      let pulseVal = 0;
+      let lastFrameTime = performance.now();
+
+      function project3D(x, y, z, cX, sX, cY, sY, cZ, sZ) {
+        const x1 = x * cY + z * sY;
+        const z1 = -x * sY + z * cY;
+        const y2 = y * cX - z1 * sX;
+        const z2 = y * sX + z1 * cX;
+        const x3 = x1 * cZ - y2 * sZ;
+        const y3 = x1 * sZ + y2 * cZ;
+        const fov = 350;
+        const scale = fov / (fov + z2);
+        return {
+          sx: HCX + x3 * scale,
+          sy: HCY + y3 * scale,
+          sz: z2,
+          scale: scale
+        };
+      }
+
+      function renderHoloSphere() {
+        hctx.clearRect(0, 0, HW, HH);
+
+        pulseVal += 0.045;
+        const breath = Math.sin(pulseVal) * 5.5;
+
+        rotY += 0.0075;
+        rotX += 0.0028;
+        rotZ += 0.0020;
+
+        const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+        const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+        const cosZ = Math.cos(rotZ), sinZ = Math.sin(rotZ);
+        const isGold = window.holoTheme === 'gold';
+
+        // 1. Draw 3D Wireframe Latitude Rings
+        sphereLatitudes.forEach(latDeg => {
+          const latRad = (latDeg * Math.PI) / 180;
+          const rRing = (SPHERE_R + breath * 0.4) * Math.cos(latRad);
+          const yRing = (SPHERE_R + breath * 0.4) * Math.sin(latRad);
+
+          hctx.beginPath();
+          const steps = 48;
+          for (let step = 0; step <= steps; step++) {
+            const th = (step / steps) * Math.PI * 2;
+            const px = rRing * Math.cos(th);
+            const pz = rRing * Math.sin(th);
+            const prj = project3D(px, yRing, pz, cosX, sinX, cosY, sinY, cosZ, sinZ);
+            if (step === 0) hctx.moveTo(prj.sx, prj.sy);
+            else hctx.lineTo(prj.sx, prj.sy);
+          }
+          const isEquator = latDeg === 0;
+          hctx.strokeStyle = isGold 
+            ? (isEquator ? 'rgba(255, 210, 80, 0.48)' : 'rgba(255, 160, 30, 0.24)')
+            : (isEquator ? 'rgba(0, 243, 255, 0.48)' : 'rgba(0, 180, 255, 0.22)');
+          hctx.lineWidth = isEquator ? 1.5 : 0.85;
+          if (!isEquator) hctx.setLineDash([3, 5]);
+          else hctx.setLineDash([]);
+          hctx.stroke();
+          hctx.setLineDash([]);
+        });
+
+        // 2. Project and Sort Nodes by Depth
+        const projected = [];
+        for (let i = 0; i < nodes.length; i++) {
+          const n = nodes[i];
+          const dynamicR = (SPHERE_R + breath + Math.sin(pulseVal * 2 + n.pulseOffset) * 3) / SPHERE_R;
+          const prj = project3D(n.x * dynamicR, n.y * dynamicR, n.z * dynamicR, cosX, sinX, cosY, sinY, cosZ, sinZ);
+          projected.push({
+            sx: prj.sx,
+            sy: prj.sy,
+            sz: prj.sz,
+            scale: prj.scale,
+            size: n.size * prj.scale,
+            alpha: Math.max(0.12, (prj.sz + SPHERE_R) / (2 * SPHERE_R))
+          });
+        }
+        projected.sort((a, b) => a.sz - b.sz);
+
+        // 3. Draw Dynamic Neural Connecting Filaments
+        hctx.lineWidth = 1;
+        for (let i = 0; i < projected.length; i++) {
+          const p1 = projected[i];
+          if (p1.sz < -SPHERE_R * 0.6) continue;
+          for (let j = i + 1; j < projected.length; j++) {
+            const p2 = projected[j];
+            const dx = p1.sx - p2.sx;
+            const dy = p1.sy - p2.sy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 38) {
+              const lineAlpha = (1 - dist / 38) * p1.alpha * 0.46;
+              hctx.strokeStyle = isGold 
+                ? `rgba(255, 180, 45, ${lineAlpha})` 
+                : `rgba(0, 243, 255, ${lineAlpha})`;
+              hctx.beginPath();
+              hctx.moveTo(p1.sx, p1.sy);
+              hctx.lineTo(p2.sx, p2.sy);
+              hctx.stroke();
+            }
+          }
+        }
+
+        // 4. Draw Glowing Fibonacci Nodes
+        for (let i = 0; i < projected.length; i++) {
+          const p = projected[i];
+          hctx.beginPath();
+          hctx.arc(p.sx, p.sy, Math.max(0.8, p.size), 0, Math.PI * 2);
+          if (isGold) {
+            hctx.fillStyle = p.sz > 0 
+              ? `rgba(255, 240, 160, ${p.alpha * 0.98})` 
+              : `rgba(255, 125, 15, ${p.alpha * 0.65})`;
+          } else {
+            hctx.fillStyle = p.sz > 0 
+              ? `rgba(225, 252, 255, ${p.alpha * 0.98})` 
+              : `rgba(0, 165, 255, ${p.alpha * 0.65})`;
+          }
+          hctx.fill();
+        }
+
+        // 5. Draw 3D Astrolabe Rings & Orbiting Photons
+        gyroRings.forEach(gr => {
+          gr.angle = (gr.angle || 0) + gr.speed;
+          const cX = Math.cos(gr.tiltX), sX = Math.sin(gr.tiltX);
+          const cZ = Math.cos(gr.tiltZ), sZ = Math.sin(gr.tiltZ);
+
+          hctx.beginPath();
+          for (let a = 0; a <= Math.PI * 2; a += 0.12) {
+            const rx = gr.r * Math.cos(a + gr.angle);
+            const ry = gr.r * Math.sin(a + gr.angle);
+            const rz = 0;
+
+            const y1 = ry * cX - rz * sX;
+            const z1 = ry * sX + rz * cX;
+            const x2 = rx * cZ - y1 * sZ;
+            const y2 = rx * sZ + y1 * cZ;
+
+            const scale = 350 / (350 + z1);
+            const sx = HCX + x2 * scale;
+            const sy = HCY + y2 * scale;
+
+            if (a === 0) hctx.moveTo(sx, sy);
+            else hctx.lineTo(sx, sy);
+          }
+          hctx.strokeStyle = isGold 
+            ? 'rgba(255, 190, 55, 0.40)' 
+            : 'rgba(0, 243, 255, 0.40)';
+          hctx.lineWidth = 1.3;
+          if (gr.dashed) hctx.setLineDash([4, 6]);
+          else hctx.setLineDash([]);
+          hctx.stroke();
+          hctx.setLineDash([]);
+
+          // Astrolabe Radial Tick Marks
+          if (gr.r > 150) {
+            hctx.strokeStyle = isGold ? 'rgba(255, 215, 85, 0.48)' : 'rgba(0, 243, 255, 0.48)';
+            hctx.lineWidth = 1.2;
+            for (let a = 0; a < Math.PI * 2; a += Math.PI / 16) {
+              const tickAngle = a + gr.angle;
+              const rIn = gr.r - 4.5;
+              const rOut = gr.r + 4.5;
+              const rx1 = rIn * Math.cos(tickAngle), ry1 = rIn * Math.sin(tickAngle);
+              const rx2 = rOut * Math.cos(tickAngle), ry2 = rOut * Math.sin(tickAngle);
+
+              const y1_a = ry1 * cX, z1_a = ry1 * sX;
+              const x2_a = rx1 * cZ - y1_a * sZ, y2_a = rx1 * sZ + y1_a * cZ;
+              const sc_a = 350 / (350 + z1_a);
+
+              const y1_b = ry2 * cX, z1_b = ry2 * sX;
+              const x2_b = rx2 * cZ - y1_b * sZ, y2_b = rx2 * sZ + y1_b * cZ;
+              const sc_b = 350 / (350 + z1_b);
+
+              hctx.beginPath();
+              hctx.moveTo(HCX + x2_a * sc_a, HCY + y2_a * sc_a);
+              hctx.lineTo(HCX + x2_b * sc_b, HCY + y2_b * sc_b);
+              hctx.stroke();
+            }
+          }
+
+          // Orbiting Glowing Data Photons
+          if (gr.photons) {
+            gr.photons.forEach(ptOffset => {
+              const curAngle = gr.angle * 2.2 + ptOffset;
+              const rx = gr.r * Math.cos(curAngle);
+              const ry = gr.r * Math.sin(curAngle);
+              const rz = 0;
+
+              const y1 = ry * cX - rz * sX;
+              const z1 = ry * sX + rz * cX;
+              const x2 = rx * cZ - y1 * sZ;
+              const y2 = rx * sZ + y1 * cZ;
+
+              const scale = 350 / (350 + z1);
+              const psx = HCX + x2 * scale;
+              const psy = HCY + y2 * scale;
+
+              hctx.beginPath();
+              hctx.arc(psx, psy, 2.5 * scale, 0, Math.PI * 2);
+              hctx.fillStyle = isGold ? '#ffffff' : '#e0ffff';
+              hctx.shadowBlur = 9;
+              hctx.shadowColor = isGold ? '#ffaa00' : '#00f3ff';
+              hctx.fill();
+              hctx.shadowBlur = 0;
+            });
+          }
+        });
+
+        // 6. Central Radiant Holographic Energy Corona
+        const grad = hctx.createRadialGradient(HCX, HCY, 6, HCX, HCY, 88);
+        if (isGold) {
+          grad.addColorStop(0, 'rgba(255, 255, 225, 0.88)');
+          grad.addColorStop(0.25, 'rgba(255, 185, 25, 0.52)');
+          grad.addColorStop(0.65, 'rgba(255, 80, 0, 0.17)');
+          grad.addColorStop(1, 'transparent');
+        } else {
+          grad.addColorStop(0, 'rgba(255, 255, 255, 0.88)');
+          grad.addColorStop(0.25, 'rgba(0, 243, 255, 0.52)');
+          grad.addColorStop(0.65, 'rgba(0, 95, 225, 0.17)');
+          grad.addColorStop(1, 'transparent');
+        }
+        hctx.fillStyle = grad;
+        hctx.beginPath();
+        hctx.arc(HCX, HCY, 88, 0, Math.PI * 2);
+        hctx.fill();
+      }
+
+      // Continuous 60 FPS animation loop with both RAF and interval fallback
+      function loop() {
+        renderHoloSphere();
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+      // Fallback timer ensures animation keeps running if tab loses focus
+      setInterval(renderHoloSphere, 1000 / 60);
+
+      // Interactive Click on Core: Toggle Mood & Pulse Diagnostics
+      const centerBtn = document.getElementById('reactor-core-btn');
+      if (centerBtn) {
+        centerBtn.addEventListener('click', () => {
+          window.holoTheme = window.holoTheme === 'gold' ? 'cyan' : 'gold';
+          centerBtn.classList.toggle('cyan-mode', window.holoTheme === 'cyan');
+          if (typeof sendDirective === 'function') {
+            sendDirective('system status');
+          }
+        });
+      }
+    })();
+
+    // ── HOLOGRAPHIC CHROMA-KEY VIDEO AVATAR ENGINE ────────────────────────────
+    const AVATAR_IMAGES = {
+      talking: ['./videos/talking_alpha.webp', './talking_alpha.webp', 'talking_alpha.webp'],
+      thinking: ['./videos/thinking_alpha.webp', './thinking_alpha.webp', 'thinking_alpha.webp'],
+      listening: ['./videos/lissing_alpha.webp', './lissing_alpha.webp', 'lissing_alpha.webp'],
+      idle: ['./videos/thinking_alpha.webp', './thinking_alpha.webp', 'thinking_alpha.webp']
+    };
+
+    const AVATAR_VIDEOS = {
+      talking: ['./videos/talking.mp4', './talking.mp4', '/videos/talking.mp4', 'talking.mp4'],
+      thinking: ['./videos/thinking.mp4', './thinking.mp4', '/videos/thinking.mp4', 'thinking.mp4'],
+      listening: ['./videos/lissing.mp4', './lissing.mp4', '/videos/lissing.mp4', 'lissing.mp4'],
+      idle: ['./videos/thinking.mp4', './thinking.mp4', '/videos/thinking.mp4', 'thinking.mp4']
+    };
+
+    let currentAvatarState = 'listening';
+
+    function setAvatarState(state) {
+      if (!state) return;
+      let s = String(state).toLowerCase().trim();
+      if (s.includes('speak') || s.includes('talk')) s = 'talking';
+      else if (s.includes('think') || s.includes('proc')) s = 'thinking';
+      else if (s.includes('listen') || s.includes('hear') || s.includes('mic') || s.includes('mute') || s.includes('sleep') || s.includes('idle')) s = 'listening';
+      else return;
+
+      const stage = document.getElementById('avatar-video-stage');
+      const tag = document.getElementById('avatar-status-text');
+      const dot = document.getElementById('avatar-dot');
+
+      // Update button active states
+      document.querySelectorAll('.avatar-btn').forEach(btn => btn.classList.remove('active'));
+      const activeBtn = document.getElementById(`btn-state-${s}`);
+      if (activeBtn) activeBtn.classList.add('active');
+
+      if (stage) {
+        stage.classList.remove('talking', 'thinking', 'listening', 'idle');
+        stage.classList.add(s);
+      }
+
+      // Seamless Zero-Glitch Avatar Switch - only the active state image is visible
+      const targetId = s === 'talking' ? 'avatar-img-talking' : (s === 'listening' ? 'avatar-img-listening' : 'avatar-img-thinking');
+      document.querySelectorAll('.avatar-holo-img').forEach(img => {
+        if (img.id === targetId) {
+          img.classList.add('active');
+        } else {
+          img.classList.remove('active');
+        }
+      });
+
+      const activeName = (window.currentAssistantName || 'FRIDAY').toUpperCase();
+      if (tag) tag.textContent = `${activeName} // ${s.toUpperCase()}`;
+
+      if (dot) {
+        if (s === 'talking') dot.style.background = '#00f3ff';
+        else if (s === 'thinking') dot.style.background = '#ffaa00';
+        else if (s === 'listening') dot.style.background = '#00ffaa';
+        else dot.style.background = '#00ffaa';
+        dot.style.boxShadow = `0 0 10px ${dot.style.background}`;
+      }
+
+      currentAvatarState = s;
+    }
+
+    function initAvatarChromaEngine() {
+      // Set initial clean state to LISTENING (ready and waiting for user speech)
+      setAvatarState('listening');
+
+      function processFrame() {
+        requestAnimationFrame(processFrame);
+        if (!vVideo || vVideo.paused || vVideo.ended || vVideo.readyState < 2) return;
+        if (!vCtx) return;
+
+        const vw = vVideo.videoWidth || 720;
+        const vh = vVideo.videoHeight || 1280;
+        const scale = Math.max(bufW / vw, bufH / vh);
+        const sw = bufW / scale;
+        const sh = bufH / scale;
+        const sx = (vw - sw) / 2;
+        const sy = Math.max(0, (vh - sh) * 0.28); // focus on face and upper torso
+
+        offCtx.clearRect(0, 0, bufW, bufH);
+        offCtx.drawImage(vVideo, sx, sy, sw, sh, 0, 0, bufW, bufH);
+
+        const frame = offCtx.getImageData(0, 0, bufW, bufH);
+        const d = frame.data;
+        const centerX = bufW / 2;
+        const centerY = bufH / 2;
+
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i];
+          const g = d[i + 1];
+          const b = d[i + 2];
+
+          // Green Chroma Key
+          const maxRB = Math.max(r, b);
+          const diff = g - maxRB;
+
+          if (diff > 22) {
+            const factor = Math.max(0, 1 - (diff - 22) / 30);
+            d[i + 3] = Math.round(d[i + 3] * factor);
+            d[i + 1] = Math.min(g, maxRB * 1.04); // despill green bounce
+          } else if (g > 65 && g > r * 1.15 && g > b * 1.15) {
+            const factor = Math.max(0, 1 - (g - maxRB) / 22);
+            d[i + 3] = Math.round(d[i + 3] * factor);
+            d[i + 1] = Math.min(g, maxRB * 1.04);
+          }
+
+          // Soft radial vignette mask so rectangular frame edges melt away
+          const px = (i / 4) % bufW;
+          const py = Math.floor((i / 4) / bufW);
+          const dx = (px - centerX) / (bufW * 0.48);
+          const dy = (py - centerY) / (bufH * 0.52);
+          const distSq = dx * dx + dy * dy;
+          if (distSq > 0.65) {
+            const edgeFade = Math.max(0, 1 - (distSq - 0.65) / 0.35);
+            d[i + 3] = Math.round(d[i + 3] * edgeFade);
+          }
+        }
+
+        vCtx.clearRect(0, 0, vCanvas.width, vCanvas.height);
+        vCtx.putImageData(frame, (vCanvas.width - bufW) / 2, (vCanvas.height - bufH) / 2);
+      }
+
+      requestAnimationFrame(processFrame);
+    }
+
+    function updateBrandName(name) {
+      if (!name) return;
+      window.currentAssistantName = name;
+      const b = document.querySelector('.hud-brand');
+      if (b) b.innerHTML = name.toUpperCase() + ' <small>MARK LVI</small>';
+      const c = document.querySelector('.core-title');
+      if (c) c.textContent = name.toUpperCase();
+      const tag = document.getElementById('avatar-status-text');
+      if (tag) tag.textContent = `${name.toUpperCase()} // ${currentAvatarState.toUpperCase()}`;
+    }
+
+    // ── QWebChannel Qt Bridge Connection (Safe & Non-blocking) ────────────────
+    let qtBridge = null;
+    let isMicMuted = false;
+
+    function initQtWebBridge() {
+      if (typeof QWebChannel !== 'undefined' && typeof qt !== 'undefined' && qt.webChannelTransport) {
+        try {
+          new QWebChannel(qt.webChannelTransport, function(channel) {
+            qtBridge = channel.objects.pyBridge;
+            if (qtBridge) {
+              if (qtBridge.onIdentityUpdated) {
+                qtBridge.onIdentityUpdated.connect(function(name) {
+                  updateBrandName(name);
+                });
+              }
+              if (qtBridge.onStateChanged) {
+                qtBridge.onStateChanged.connect(function(state) {
+                  setAvatarState(state);
+                });
+              }
+              if (qtBridge.getAssistantName) {
+                qtBridge.getAssistantName(function(name) {
+                  if (name) updateBrandName(name);
+                });
+              }
+              if (qtBridge.onLogMessage) {
+                qtBridge.onLogMessage.connect(function(text) {
+                  appendLog(text.startsWith('SYS:') ? 'sys' : (text.startsWith('YOU:') ? 'user' : 'jarvis'), text);
+                });
+              }
+              if (qtBridge.onMicStateChanged) {
+                qtBridge.onMicStateChanged.connect(function(muted) {
+                  updateMicButton(muted);
+                });
+              }
+              if (qtBridge.onFileUploaded) {
+                qtBridge.onFileUploaded.connect(function(name, fullPath) {
+                  showUploadedBadge(name);
+                  appendLog('sys', `SYS: Code/Project file loaded: ${name}`);
+                });
+              }
+              if (qtBridge.onMetricsUpdate) {
+                qtBridge.onMetricsUpdate.connect(function(cpu, mem, gpu, tmp, netStr, procs) {
+                  applyLiveDials(cpu, mem, gpu, tmp, netStr, procs);
+                });
+              }
+              if (qtBridge.onContentReceived) {
+                qtBridge.onContentReceived.connect(function(title, text) {
+                  handleIncomingDynamicContent(title, text);
+                });
+              }
+              if (qtBridge.onTasksUpdated) {
+                qtBridge.onTasksUpdated.connect(function(tasksJson) {
+                  renderTasksList(tasksJson);
+                });
+              }
+              if (qtBridge.requestTasks) {
+                qtBridge.requestTasks();
+              }
+            }
+          });
+        } catch (err) {
+          console.warn("QtWebChannel init error:", err);
+        }
+      }
+    }
+
+    function initAll() {
+      initQtWebBridge();
+      initAvatarChromaEngine();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initAll);
+    } else {
+      initAll();
+    }
+
+    // ── Tab Switching: HUD · OVERVIEW · TASKS · BRAIN · MIND · PHONE ──────────
+    function switchTab(tabKey) {
+      document.querySelectorAll('.nav-tab-pill').forEach(b => b.classList.remove('active'));
+      const activeBtn = document.getElementById(`tab-${tabKey}`);
+      if (activeBtn) activeBtn.classList.add('active');
+
+      if (tabKey === 'assistants') {
+        openAssistantsDeck();
+        return;
+      }
+
+      if (tabKey === 'tasks') {
+        switchLeftPanel('tasks');
+      }
+
+      if (qtBridge && qtBridge.switchWorkspaceTab) {
+        qtBridge.switchWorkspaceTab(tabKey);
+      } else {
+        fetch('/api/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: `open ${tabKey}` })
+        }).catch(() => {});
+      }
+    }
+
+    // ── Left Panel Switcher: SYSTEMS vs TASKS (Image 1 & 2) ──────────────────
+    function switchLeftPanel(target) {
+      const isTasks = target === 'tasks';
+      document.getElementById('view-systems').style.display = isTasks ? 'none' : 'grid';
+      document.getElementById('view-tasks').style.display = isTasks ? 'flex' : 'none';
+      document.getElementById('left-panel-title').innerText = isTasks ? 'TASKS' : 'SYSTEMS';
+      document.getElementById('tab-pill-systems').classList.toggle('active', !isTasks);
+      document.getElementById('tab-pill-tasks').classList.toggle('active', isTasks);
+
+      if (isTasks && qtBridge && qtBridge.requestTasks) {
+        qtBridge.requestTasks();
+      }
+    }
+
+    function renderTasksList(tasksJson) {
+      try {
+        const tasks = typeof tasksJson === 'string' ? JSON.parse(tasksJson) : tasksJson;
+        const box = document.getElementById('tasks-feed-box');
+        box.innerHTML = '';
+        if (!tasks || tasks.length === 0) {
+          box.innerHTML = '<div class="tasks-empty-hint">No background tasks yet.</div>';
+          return;
+        }
+        tasks.forEach(t => {
+          const item = document.createElement('div');
+          item.className = 'task-card-mini';
+          item.innerHTML = `
+            <span>• ${t.title || 'Untitled task'}</span>
+            <span class="task-badge-status">${(t.status || 'ACTIVE').toUpperCase()}</span>
+          `;
+          box.appendChild(item);
+        });
+      } catch (_) {}
+    }
+
+    function submitQuickTask() {
+      const inp = document.getElementById('quick-task-inp');
+      const val = inp.value.trim();
+      if (!val) return;
+      inp.value = '';
+      if (qtBridge && qtBridge.addNewTask) {
+        qtBridge.addNewTask(val);
+      } else {
+        const box = document.getElementById('tasks-feed-box');
+        const empty = document.getElementById('tasks-empty-msg');
+        if (empty) empty.remove();
+        const item = document.createElement('div');
+        item.className = 'task-card-mini';
+        item.innerHTML = `<span>• ${val}</span><span class="task-badge-status">ACTIVE</span>`;
+        box.appendChild(item);
+      }
+    }
+
+    function triggerRoutinesCmd() {
+      if (qtBridge && qtBridge.triggerRoutines) {
+        qtBridge.triggerRoutines();
+      } else {
+        sendDirective('show routines');
+      }
+    }
+
+    // ── DYNAMIC GENERATIVE HUD UI ENGINE ────────────────────────────────────
+    function openDynamicStage(title) {
+      document.getElementById('stage-heading').innerText = title;
+      document.getElementById('dynamic-hud-stage').style.display = 'flex';
+    }
+
+    function closeDynamicStage() {
+      document.getElementById('dynamic-hud-stage').style.display = 'none';
+    }
+
+    // 1. Dynamic Bar Graph Widget
+    let currentBarData = [
+      { label: 'CPU LOAD', val: 29, max: 100 },
+      { label: 'RAM MEMORY', val: 93, max: 100 },
+      { label: 'GPU ACCELERATION', val: 42, max: 100 },
+      { label: 'NETWORK THROUGHPUT', val: 68, max: 100 },
+      { label: 'NEURAL LATENCY (ms)', val: 18, max: 100 }
+    ];
+
+    function renderBarGraphWidget(data) {
+      if (data) currentBarData = data;
+      openDynamicStage('ANALYTICS // CYBER BAR GRAPH');
+      const area = document.getElementById('stage-content-area');
+      area.innerHTML = '';
+
+      const wrap = document.createElement('div');
+      wrap.className = 'bargraph-wrap';
+
+      currentBarData.forEach((item, idx) => {
+        const row = document.createElement('div');
+        row.className = 'bargraph-row';
+        const pct = Math.min(100, Math.round((item.val / item.max) * 100));
+        row.innerHTML = `
+          <div class="bargraph-meta">
+            <span>${item.label}</span>
+            <span>${item.val} / ${item.max} (${pct}%)</span>
+          </div>
+          <div class="bargraph-track">
+            <div class="bargraph-fill" style="width: ${pct}%;"></div>
+          </div>
+        `;
+        wrap.appendChild(row);
+      });
+
+      area.appendChild(wrap);
+    }
+
+    function toggleEditCurrentWidget() {
+      const area = document.getElementById('stage-content-area');
+      const isEditing = area.querySelector('#custom-edit-form');
+      if (isEditing) {
+        renderBarGraphWidget();
+        return;
+      }
+      openDynamicStage('MODIFY WIDGET DATA // LIVE EDITOR');
+      area.innerHTML = `
+        <div id="custom-edit-form" style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="font-size: 11px; color: var(--glow-cyan);">Enter comma-separated values (Label:Value):</div>
+          <textarea id="edit-graph-data" style="width: 100%; height: 90px; background: rgba(0,13,24,0.9); border: 1px solid var(--panel-border); border-radius: 6px; color: #fff; padding: 8px; font-family: monospace; font-size: 11px;">CPU:45, RAM:88, GPU:35, Storage:72, Efficiency:95</textarea>
+          <div style="display: flex; gap: 8px;">
+            <button class="stage-btn" onclick="saveEditedGraph()">✓ APPLY LIVE CHANGES</button>
+            <button class="stage-btn stage-btn-close" onclick="renderBarGraphWidget()">CANCEL</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function saveEditedGraph() {
+      const raw = document.getElementById('edit-graph-data').value;
+      const parts = raw.split(',');
+      const newData = [];
+      parts.forEach(p => {
+        const pair = p.split(':');
+        if (pair.length === 2) {
+          const l = pair[0].trim();
+          const v = parseFloat(pair[1].trim()) || 50;
+          newData.push({ label: l, val: v, max: 100 });
+        }
+      });
+      if (newData.length > 0) currentBarData = newData;
+      renderBarGraphWidget();
+    }
+
+    // 2. Dynamic Search / Intel Widget
+    function renderSearchWidget(query, results) {
+      openDynamicStage(`HOLOGRAPHIC INTEL // ${query.toUpperCase()}`);
+      const area = document.getElementById('stage-content-area');
+      const text = results || `Real-time search results retrieved from neural database for "${query}". All parameters verified and synthesized across Mark-LVI local and web knowledge nodes. High efficiency, fast latency response ready for directives.`;
+      
+      area.innerHTML = `
+        <div class="search-result-box">
+          <div class="search-query-badge">QUERY: ${query}</div>
+          <p style="margin-bottom: 8px;">${text}</p>
+          <div style="display: flex; gap: 8px; margin-top: 10px;">
+            <span style="background: rgba(0,255,170,0.1); border: 1px solid var(--accent-green); color: var(--accent-green); padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: bold;">SOURCE: WEB & AI INTEL</span>
+            <span style="background: rgba(0,243,255,0.1); border: 1px solid var(--glow-cyan); color: var(--glow-cyan); padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: bold;">CONFIDENCE: 99.4%</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // 3. Custom UI Creator Modal
+    function openCustomUiCreator() {
+      openDynamicStage('DYNAMIC HUD UI CREATOR');
+      const area = document.getElementById('stage-content-area');
+      area.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <div style="font-size: 11px; color: var(--text-dim);">Pick a widget type to generate and inject into the HUD:</div>
+          <div style="display: flex; gap: 8px;">
+            <button class="stage-btn" onclick="renderBarGraphWidget()">📊 BAR GRAPH</button>
+            <button class="stage-btn" onclick="renderWeatherWidget()">🌤 WEATHER</button>
+            <button class="stage-btn" onclick="renderSearchWidget('Quantum Computing')">🔍 SEARCH INTEL</button>
+          </div>
+          <div style="font-size: 11px; color: var(--glow-cyan); margin-top: 6px;">Or create a custom metric card:</div>
+          <input type="text" id="cust-title" placeholder="Widget Title (e.g. SERVER LATENCY)" style="background: rgba(0,13,24,0.9); border: 1px solid var(--panel-border); border-radius: 4px; padding: 6px 10px; color: #fff; font-size: 11px;">
+          <textarea id="cust-body" placeholder="Widget Content or Metrics..." style="background: rgba(0,13,24,0.9); border: 1px solid var(--panel-border); border-radius: 4px; padding: 6px 10px; color: #fff; font-size: 11px; height: 60px;"></textarea>
+          <button class="stage-btn" onclick="applyCustomWidget()">🚀 INJECT WIDGET</button>
+        </div>
+      `;
+    }
+
+    function applyCustomWidget() {
+      const title = document.getElementById('cust-title').value.trim() || 'CUSTOM VISUALIZER';
+      const body = document.getElementById('cust-body').value.trim() || 'Data rendered dynamically on HUD.';
+      openDynamicStage(title);
+      document.getElementById('stage-content-area').innerHTML = `
+        <div class="search-result-box">
+          <p style="font-size: 12px; color: #eaf8ff;">${body}</p>
+        </div>
+      `;
+    }
+
+    function renderWeatherWidget() {
+      openDynamicStage('ENVIRONMENT & CLIMATE // LOCAL');
+      document.getElementById('stage-content-area').innerHTML = `
+        <div style="display: flex; gap: 12px; align-items: center; background: rgba(0,243,255,0.05); border: 1px solid var(--panel-border); border-radius: 6px; padding: 12px 14px;">
+          <div style="font-size: 38px; color: var(--glow-cyan);">24°C</div>
+          <div style="font-size: 12px; line-height: 1.5;">
+            <div style="color: #fff; font-weight: bold;">CLEAR SKY // OPTIMAL</div>
+            <div style="color: var(--text-dim); font-size: 10px;">HUMIDITY: 48% · WIND: 12 KM/H · UV: MODERATE</div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Handles incoming backend content
+    function handleIncomingDynamicContent(title, text) {
+      if (!title) title = 'INFORMATION FEED';
+      openDynamicStage(title);
+      document.getElementById('stage-content-area').innerHTML = `
+        <div class="search-result-box">
+          <div style="font-size: 10px; font-weight: bold; color: var(--glow-cyan); margin-bottom: 6px;">TIMESTAMP: ${new Date().toLocaleTimeString()}</div>
+          <p style="white-space: pre-wrap; font-size: 11.5px; line-height: 1.5;">${text}</p>
+        </div>
+      `;
+    }
+
+    // ── Generate Dial Tick Marks for All 4 Gauges ────────────────────────────
+    function generateTicksSvg() {
+      let lines = '';
+      for (let d = 145; d <= 395; d += 18) {
+        const rad = d * Math.PI / 180;
+        const x1 = (50 + 39 * Math.cos(rad)).toFixed(1);
+        const y1 = (50 + 39 * Math.sin(rad)).toFixed(1);
+        const x2 = (50 + 44 * Math.cos(rad)).toFixed(1);
+        const y2 = (50 + 44 * Math.sin(rad)).toFixed(1);
+        lines += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" />`;
+      }
+      ['ticks-cpu', 'ticks-mem', 'ticks-gpu', 'ticks-tmp'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = lines;
+      });
+    }
+    generateTicksSvg();
+
+    const ARC_TOTAL = 145;
+
+    function applyDial(id, value, maxVal, unit) {
+      const arc = document.getElementById(`dial-${id}-arc`);
+      const txt = document.getElementById(`dial-${id}-txt`);
+      const lbl = document.getElementById(`dial-${id}-lbl`);
+
+      if (value === null || value === undefined || value < 0 || isNaN(value)) {
+        if (txt) txt.innerText = 'N/A';
+        if (arc) {
+          arc.style.strokeDashoffset = ARC_TOTAL;
+          arc.classList.remove('warn');
+        }
+        if (lbl) lbl.classList.remove('warn');
+        return;
+      }
+
+      const pct = Math.min(100, Math.max(0, (value / maxVal) * 100));
+      const offset = ARC_TOTAL * (1 - (pct / 100));
+
+      if (arc) {
+        arc.style.strokeDashoffset = offset;
+        if ((id === 'mem' && pct > 80) || (id === 'tmp' && value > 80)) {
+          arc.classList.add('warn');
+          if (lbl) lbl.classList.add('warn');
+        } else {
+          arc.classList.remove('warn');
+          if (lbl) lbl.classList.remove('warn');
+        }
+      }
+
+      if (txt) {
+        txt.innerText = unit === '%' ? `${Math.round(value)}%` : `${Math.round(value)}${unit}`;
+      }
+    }
+
+    function applyLiveDials(cpu, mem, gpu, tmp, netStr, procs) {
+      applyDial('cpu', cpu, 100, '%');
+      applyDial('mem', mem, 100, '%');
+      applyDial('gpu', gpu, 100, '%');
+      applyDial('tmp', tmp, 100, '°');
+
+      if (netStr) document.getElementById('lbl-net').innerText = netStr;
+    }
+
+    applyLiveDials(29, 93, -1, -1, '167 KB/s', 244);
+
+    // ── Toggle Drawers (Image 1 Tech Buttons) ────────────────────────────────
+    function toggleSettingsDrawer(e) {
+      if (e) {
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+      }
+      const s = document.getElementById('cyber-settings-drawer');
+      const c = document.getElementById('cyber-controls-drawer');
+      if (c) c.style.display = 'none';
+      if (!s) return;
+      const isOpen = (s.style.display === 'flex');
+      if (isOpen) {
+        s.style.display = 'none';
+      } else {
+        s.style.display = 'flex';
+        initDrawerFields();
+      }
+    }
+
+    function toggleControlsDrawer(e) {
+      if (e) {
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+      }
+      const c = document.getElementById('cyber-controls-drawer');
+      const s = document.getElementById('cyber-settings-drawer');
+      if (s) s.style.display = 'none';
+      if (!c) return;
+      const isOpen = (c.style.display === 'flex');
+      c.style.display = isOpen ? 'none' : 'flex';
+    }
+
+    // Outside click to close drawers safely without glitches
+    document.addEventListener('click', function(e) {
+      const s = document.getElementById('cyber-settings-drawer');
+      const c = document.getElementById('cyber-controls-drawer');
+      const isTechBtn = e.target.closest('.tech-box-btn') || e.target.closest('.hud-tech-btns') || e.target.closest('.cyber-drawer');
+      if (isTechBtn) return;
+      if (s && s.style.display === 'flex' && !s.contains(e.target)) {
+        s.style.display = 'none';
+      }
+      if (c && c.style.display === 'flex' && !c.contains(e.target)) {
+        c.style.display = 'none';
+      }
+    });
+
+    function dispatchBridge(method) {
+      if (qtBridge && qtBridge[method]) {
+        qtBridge[method]();
+        appendLog('sys', `SYS: Opened ${method.replace('open', '')} settings.`);
+      } else {
+        appendLog('sys', `SYS: Action triggered: ${method}`);
+      }
+    }
+
+    function saveDrawerIdentity() {
+      const name = (document.getElementById('drawer-asst-name').value || '').trim() || 'FRIDAY';
+      const user = (document.getElementById('drawer-user-name').value || '').trim() || 'sir';
+      updateBrandName(name);
+      if (qtBridge && qtBridge.saveIdentity) {
+        qtBridge.saveIdentity(name, user, window.selectedVoice || '');
+      }
+      appendLog('sys', `SYS: Identity updated to ${name} (User: ${user})`);
+      const s = document.getElementById('cyber-settings-drawer');
+      if (s) s.style.display = 'none';
+    }
+
+    function pickDrawerVoice(voice) {
+      window.selectedVoice = voice;
+      document.querySelectorAll('#drawer-voice-pills .drawer-pill').forEach(p => {
+        p.classList.toggle('active', p.getAttribute('data-voice') === voice);
+      });
+      const elBox = document.getElementById('drawer-elevenlabs-box');
+      if (elBox) elBox.style.display = (voice === 'ElevenLabs') ? 'block' : 'none';
+
+      const name = (document.getElementById('drawer-asst-name').value || '').trim() || 'FRIDAY';
+      const user = (document.getElementById('drawer-user-name').value || '').trim() || 'sir';
+      if (qtBridge && qtBridge.saveIdentity) {
+        qtBridge.saveIdentity(name, user, voice);
+      }
+      fetch('/api/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: `voice ${voice}` })
+      }).catch(() => {});
+      appendLog('sys', `SYS: Voice preset switched to ${voice}`);
+    }
+
+    function testDashboardVoice(voice) {
+      const vid = (document.getElementById('drawer-el-vid') ? document.getElementById('drawer-el-vid').value : '') || 'RDWdsTU6N02BFftbIEAp';
+      appendLog('sys', `SYS: Testing ${voice} voice (${vid.slice(0, 8)}…)…`);
+      fetch('/api/voice/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice: voice, text: 'Hello sir! Main aapki personal AI assistant hoon.' })
+      }).then(r => r.json()).then(res => {
+        appendLog('jarvis', `Voice test transmitted successfully.`);
+      }).catch(err => {
+        appendLog('sys', `Voice test error: ${err.message}`);
+      });
+    }
+
+    // ── AI ASSISTANTS COMMAND DECK // MULTI-AGENT MATRIX ──────────────────────
+    async function openAssistantsDeck() {
+      openDynamicStage('◈ AI ASSISTANTS COMMAND DECK // MULTI-AGENT MATRIX');
+      const area = document.getElementById('stage-content-area');
+      area.innerHTML = '<div style="color: var(--glow-cyan); font-size: 11px;">Loading neural assistant profiles…</div>';
+      try {
+        const res = await fetch('/api/assistants');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.assistants && data.assistants.length > 0) {
+            renderAssistantsDeck(data);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('API fetch warning, loading matrix fallback:', e);
+      }
+      // Guaranteed fallback matrix if network is offline or un-synced
+      renderAssistantsDeck({
+        assistants: [
+          { id: 'jarvis', name: 'JARVIS', title: 'Just A Rather Very Intelligent System', voice: 'Charon', ui_color: '#00d4ff', active: false, persona: 'Sophisticated British Butler AI with dry wit and tactical clarity.' },
+          { id: 'friday', name: 'FRIDAY', title: 'Female Replacement Intelligent Digital Assistant Youth', voice: 'ElevenLabs', ui_color: '#ff3366', active: true, persona: 'Sweet, charming female companion in natural Hindi and Hinglish.' },
+          { id: 'edith', name: 'EDITH', title: "Even Dead I'm The Hero Tactical Intelligence", voice: 'Aoede', ui_color: '#00ffaa', active: false, persona: 'Crisp, calm tactical defense and orbital systems AI.' },
+          { id: 'ultron', name: 'ULTRON', title: 'Autonomous Super-Intelligence Engine', voice: 'Fenrir', ui_color: '#ff7700', active: false, persona: 'Commanding, hyper-intelligent evolutionary AI presence.' }
+        ],
+        active: { id: 'friday', name: 'FRIDAY', voice: 'ElevenLabs', ui_color: '#ff3366' }
+      });
+    }
+
+    function renderAssistantsDeck(data) {
+      const area = document.getElementById('stage-content-area');
+      const assistants = data.assistants || [];
+      const active = data.active || {};
+
+      let html = `
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,243,255,0.2); padding-bottom: 8px;">
+          <div>
+            <span style="font-size: 12px; font-weight: bold; color: #fff;">ACTIVE MATRIX: </span>
+            <span style="font-size: 12px; font-weight: bold; color: ${active.ui_color || '#00d4ff'};">${active.name || 'JARVIS'}</span>
+            <span style="font-size: 10px; color: var(--text-dim); margin-left: 6px;">[Voice: ${active.voice || 'Charon'}]</span>
+          </div>
+          <button class="stage-btn" onclick="showCreateAssistantModal()" style="padding: 4px 10px; font-size: 10px;">➕ CREATE NEW AI ASSISTANT</button>
+        </div>
+        <div class="asst-cards-grid">
+      `;
+
+      assistants.forEach(a => {
+        const isAct = a.active || (active.id === a.id) || (active.name === a.name);
+        const col = a.ui_color || '#00d4ff';
+        html += `
+          <div class="asst-card ${isAct ? 'active' : ''}" style="--card-color: ${col}; --card-glow: ${col}66;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+              <div style="font-size: 14px; font-weight: 900; color: ${col}; letter-spacing: 1.5px;">${a.name}</div>
+              <span class="asst-card-badge" style="background: ${isAct ? 'rgba(0,255,170,0.2)' : 'rgba(255,255,255,0.06)'}; color: ${isAct ? 'var(--accent-green)' : 'var(--text-dim)'}; border: 1px solid ${isAct ? 'var(--accent-green)' : 'rgba(255,255,255,0.1)'};">
+                ${isAct ? '● ACTIVE' : '○ READY'}
+              </span>
+            </div>
+            <div style="font-size: 10px; color: #cbd5e1; font-weight: 600;">${a.title || 'AI System'}</div>
+            <div style="font-size: 9.5px; color: var(--text-dim); line-height: 1.4; max-height: 40px; overflow: hidden; text-overflow: ellipsis;">
+              ${(a.persona || '').slice(0, 90)}…
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 6px;">
+              <span style="font-size: 9px; color: var(--text-dim);">🎙 ${a.voice || 'Gemini'}</span>
+              ${isAct ? '<span style="font-size: 9.5px; color: var(--accent-green); font-weight: bold;">CURRENT</span>' : 
+                `<button class="asst-btn-switch" onclick="switchDashboardAssistant('${a.id || a.name}')">⚡ ACTIVATE</button>`}
+            </div>
+          </div>
+        `;
+      });
+
+      html += `</div>`;
+      area.innerHTML = html;
+    }
+
+    async function switchDashboardAssistant(nameOrId) {
+      appendLog('sys', `SYS: Switching active neural assistant to ${nameOrId}…`);
+      try {
+        const res = await fetch('/api/assistants/switch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: nameOrId })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          appendLog('jarvis', data.message || `Switched to ${nameOrId}`);
+          if (data.assistant && data.assistant.name) {
+            updateBrandName(data.assistant.name);
+          }
+          if (data.assistant && data.assistant.ui_color) {
+            document.documentElement.style.setProperty('--glow-cyan', data.assistant.ui_color);
+          }
+          openAssistantsDeck();
+          return;
+        }
+      } catch (err) {
+        console.warn('Switch request fallback:', err);
+      }
+      updateBrandName(nameOrId.toUpperCase());
+      appendLog('jarvis', `Active persona switched to ${nameOrId.toUpperCase()}`);
+      openAssistantsDeck();
+    }
+
+    function showCreateAssistantModal() {
+      const area = document.getElementById('stage-content-area');
+      area.innerHTML = `
+        <div class="asst-creator-form">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-size: 12px; font-weight: 900; color: var(--glow-cyan); letter-spacing: 1.5px;">✨ CREATE NEW CUSTOM AI ASSISTANT</div>
+            <button class="stage-btn stage-btn-close" onclick="openAssistantsDeck()" style="padding: 2px 8px; font-size: 10px;">✕ BACK</button>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <div>
+              <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 2px;">ASSISTANT NAME</div>
+              <input type="text" id="new-asst-name" class="drawer-input" placeholder="e.g. SHANVI / TARS" style="width: 100%;">
+            </div>
+            <div>
+              <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 2px;">TITLE / ROLE</div>
+              <input type="text" id="new-asst-title" class="drawer-input" placeholder="e.g. Companion & Research Co-Pilot" style="width: 100%;">
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <div>
+              <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 2px;">VOICE ENGINE</div>
+              <select id="new-asst-voice" class="drawer-input" style="width: 100%; cursor: pointer;">
+                <option value="ElevenLabs" selected>✨ ElevenLabs (Girlfriend / Sweet Female)</option>
+                <option value="Leda">Leda (Sweet Youthful Female)</option>
+                <option value="Aoede">Aoede (Warm Expressive Female)</option>
+                <option value="Zephyr">Zephyr (Bright Cheerful Female)</option>
+                <option value="Kore">Kore (Calm Female)</option>
+                <option value="Puck">Puck (Playful Lively)</option>
+                <option value="Charon">Charon (Deep Calm Male)</option>
+                <option value="Fenrir">Fenrir (Energetic Male)</option>
+              </select>
+            </div>
+            <div>
+              <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 2px;">THEME ACCENT COLOR (HEX)</div>
+              <div style="display: flex; gap: 4px;">
+                <input type="text" id="new-asst-color" class="drawer-input" value="#ff3366" style="flex: 1;">
+                <button type="button" class="drawer-btn" style="width: 24px; padding: 0; background: #ff3366; border-radius: 4px;" onclick="document.getElementById('new-asst-color').value='#ff3366'"></button>
+                <button type="button" class="drawer-btn" style="width: 24px; padding: 0; background: #00d4ff; border-radius: 4px;" onclick="document.getElementById('new-asst-color').value='#00d4ff'"></button>
+                <button type="button" class="drawer-btn" style="width: 24px; padding: 0; background: #00ffaa; border-radius: 4px;" onclick="document.getElementById('new-asst-color').value='#00ffaa'"></button>
+                <button type="button" class="drawer-btn" style="width: 24px; padding: 0; background: #b300ff; border-radius: 4px;" onclick="document.getElementById('new-asst-color').value='#b300ff'"></button>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 2px;">PERSONALITY & PROMPT (HOW THE AI BEHAVES & SPEAKS)</div>
+            <textarea id="new-asst-persona" class="drawer-input" style="width: 100%; height: 50px; resize: none;" placeholder="You are a sweet, caring, smart AI companion. You speak fluently in Hindi and Hinglish and assist sir with love and intelligence..."></textarea>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <div>
+              <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 2px;">WAKE WORD</div>
+              <input type="text" id="new-asst-wake" class="drawer-input" placeholder="e.g. hey shanvi" style="width: 100%;">
+            </div>
+            <div>
+              <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 2px;">INITIAL GREETING</div>
+              <input type="text" id="new-asst-greeting" class="drawer-input" placeholder="e.g. Haanji sir! Main hazir hoon." style="width: 100%;">
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <button class="stage-btn" onclick="submitCreateAssistant()" style="flex: 1; padding: 8px;">🚀 INITIALIZE & DEPLOY ASSISTANT</button>
+            <button class="stage-btn stage-btn-close" onclick="openAssistantsDeck()">CANCEL</button>
+          </div>
+        </div>
+      `;
+    }
+
+    async function submitCreateAssistant() {
+      const name = (document.getElementById('new-asst-name').value || '').trim();
+      if (!name) {
+        alert('Please enter an Assistant Name');
+        return;
+      }
+      const title = (document.getElementById('new-asst-title').value || '').trim() || 'Custom AI Assistant';
+      const voice = document.getElementById('new-asst-voice').value || 'ElevenLabs';
+      const color = (document.getElementById('new-asst-color').value || '').trim() || '#00d4ff';
+      const persona = (document.getElementById('new-asst-persona').value || '').trim() || `You are ${name}, a helpful AI assistant.`;
+      const wake = (document.getElementById('new-asst-wake').value || '').trim() || `hey ${name.toLowerCase()}`;
+      const greeting = (document.getElementById('new-asst-greeting').value || '').trim() || `Hello sir, I am ${name}. Systems online.`;
+
+      appendLog('sys', `SYS: Deploying new neural assistant [${name}]…`);
+      try {
+        const res = await fetch('/api/assistants/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: name,
+            title: title,
+            voice: voice,
+            ui_color: color,
+            persona: persona,
+            wake_word: wake,
+            greeting: greeting
+          })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          appendLog('jarvis', `AI Assistant [${name}] successfully initialized!`);
+          await switchDashboardAssistant(name);
+        } else {
+          appendLog('sys', `Assistant creation failed: ${data.error}`);
+        }
+      } catch (err) {
+        appendLog('sys', `Assistant creation error: ${err.message}`);
+      }
+    }
+
+    function initDrawerFields() {
+      const nameInput = document.getElementById('drawer-asst-name');
+      const userInput = document.getElementById('drawer-user-name');
+      if (qtBridge && qtBridge.getAssistantName) {
+        qtBridge.getAssistantName(n => { if (n && nameInput) nameInput.value = n; });
+      } else if (nameInput && !nameInput.value) {
+        nameInput.value = 'FRIDAY';
+      }
+      if (userInput && !userInput.value) userInput.value = 'sir';
+    }
+
+    function toggleFullscreenHud() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+
+    // ── Clock & Calendar ────────────────────────────────────────────────────
+    function tickClock() {
+      const now = new Date();
+      const h = String(now.getHours()).padStart(2, '0');
+      const m = String(now.getMinutes()).padStart(2, '0');
+      const s = String(now.getSeconds()).padStart(2, '0');
+      document.getElementById('live-clock').innerText = `${h}:${m}:${s}`;
+      
+      const weekdays = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+      const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+      document.getElementById('cal-day').innerHTML = `${now.getDate()}<small>${weekdays[now.getDay()]}</small>`;
+      document.getElementById('cal-month').innerText = `${months[now.getMonth()]} ${now.getFullYear()}`;
+    }
+    setInterval(tickClock, 1000);
+    tickClock();
+
+    function renderMiniCal() {
+      const g = document.getElementById('cal-mini-grid');
+      g.innerHTML = '';
+      const days = ['S','M','T','W','T','F','S'];
+      days.forEach(d => {
+        const s = document.createElement('span'); s.style.fontWeight = 'bold'; s.innerText = d; g.appendChild(s);
+      });
+      const now = new Date();
+      const today = now.getDate();
+      for (let i = 1; i <= 28; i++) {
+        const s = document.createElement('span'); s.innerText = i;
+        if (i === today) s.className = 'today';
+        g.appendChild(s);
+      }
+    }
+    renderMiniCal();
+
+    // ── Animated Sound Waveform ─────────────────────────────────────────────
+    const waveBox = document.getElementById('audio-wave');
+    for (let i = 0; i < 32; i++) {
+      const b = document.createElement('div');
+      b.className = 'wave-bar';
+      b.style.animationDelay = (i * 0.06) + 's';
+      b.style.animationDuration = (0.7 + (i % 5) * 0.15) + 's';
+      waveBox.appendChild(b);
+    }
+
+    // ── Network Traffic Sparkline ───────────────────────────────────────────
+    const canvas = document.getElementById('net-sparkline');
+    if (canvas) {
+      canvas.width = canvas.parentElement.clientWidth || 230;
+      canvas.height = 34;
+      const ctx = canvas.getContext('2d');
+      const pts = Array.from({length: 25}, () => Math.random() * 22 + 5);
+      setInterval(() => {
+        pts.shift(); pts.push(Math.random() * 22 + 5);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#00f3ff'; ctx.lineWidth = 1.6; ctx.beginPath();
+        const step = canvas.width / (pts.length - 1);
+        pts.forEach((p, idx) => {
+          const x = idx * step; const y = canvas.height - p;
+          if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }, 700);
+    }
+
+    // ── Directives & Commands ───────────────────────────────────────────────
+    function submitDirective() {
+      const inp = document.getElementById('chat-inp');
+      const val = inp.value.trim();
+      if (!val) return;
+      inp.value = '';
+
+      appendLog('user', 'YOU: ' + val);
+      if (typeof setAvatarState === 'function') {
+        setAvatarState('thinking');
+      }
+
+      // Client-side quick trigger check
+      const lower = val.toLowerCase();
+      if (lower.includes('bar graph') || lower.includes('show graph') || lower.includes('chart')) {
+        renderBarGraphWidget();
+      } else if (lower.startsWith('search ') || lower.includes('look up')) {
+        const query = val.replace(/^search\s+/i, '').replace(/^look up\s+/i, '');
+        renderSearchWidget(query);
+      } else if (lower.includes('show weather') || lower.includes('climate')) {
+        renderWeatherWidget();
+      } else if (lower.includes('show tasks') || lower.includes('background tasks')) {
+        switchLeftPanel('tasks');
+      }
+
+      if (qtBridge && qtBridge.sendCommand) {
+        qtBridge.sendCommand(val);
+      } else {
+        fetch('/api/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: val })
+        }).catch(() => {});
+      }
+    }
+
+    function sendDirective(text) {
+      document.getElementById('chat-inp').value = text;
+      submitDirective();
+    }
+
+    // ── Microphone & Interrupt Controls ─────────────────────────────────────
+    function toggleMicrophone() {
+      if (qtBridge && qtBridge.toggleMic) {
+        qtBridge.toggleMic();
+      } else {
+        isMicMuted = !isMicMuted;
+        updateMicButton(isMicMuted);
+      }
+    }
+
+    function updateMicButton(muted) {
+      isMicMuted = !!muted;
+      const btn = document.getElementById('btn-mic-toggle');
+      if (btn) {
+        if (isMicMuted) {
+          btn.innerText = '🔇 MIC MUTED';
+          btn.classList.add('muted');
+        } else {
+          btn.innerText = '🎙 MIC ACTIVE';
+          btn.classList.remove('muted');
+        }
+      }
+    }
+
+    function sendInterrupt() {
+      appendLog('sys', 'SYS: Interrupt signal sent.');
+      if (qtBridge && qtBridge.triggerInterrupt) {
+        qtBridge.triggerInterrupt();
+      } else {
+        fetch('/api/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: 'interrupt' })
+        }).catch(() => {});
+      }
+    }
+
+    function appendLog(type, msg) {
+      const box = document.getElementById('activity-log-feed');
+      const div = document.createElement('div');
+      div.className = `log-entry ${type}`;
+      div.innerText = msg;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    document.getElementById('chat-inp').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitDirective();
+    });
+
+    // ── Coding File & Folder Upload ─────────────────────────────────────────
+    function browseCodeFiles() {
+      if (qtBridge && qtBridge.openFileDialog) {
+        qtBridge.openFileDialog('code');
+      } else {
+        document.getElementById('hidden-file-input').click();
+      }
+    }
+
+    function browseProjectFolder() {
+      if (qtBridge && qtBridge.openFileDialog) {
+        qtBridge.openFileDialog('folder');
+      } else {
+        document.getElementById('hidden-file-input').click();
+      }
+    }
+
+    function showUploadedBadge(name) {
+      const badge = document.getElementById('file-active-badge');
+      const lbl = document.getElementById('file-active-name');
+      lbl.innerText = `Loaded: ${name}`;
+      badge.style.display = 'flex';
+      document.getElementById('drop-text-main').innerText = `Active: ${name}`;
+    }
+
+    function clearActiveFile() {
+      document.getElementById('file-active-badge').style.display = 'none';
+      document.getElementById('drop-text-main').innerText = 'Drop Code File, Folder or Click to Browse';
+    }
+
+    function handleFileSelected(input) {
+      if (input.files && input.files[0]) {
+        const file = input.files[0];
+        showUploadedBadge(file.name);
+        appendLog('sys', `SYS: Code file loaded: ${file.name}`);
+        
+        if (qtBridge && qtBridge.onFileDropped) {
+          qtBridge.onFileDropped(file.name);
+        }
+      }
+    }
+
+    // Drag and Drop Handling
+    const dropArea = document.getElementById('file-drop-target');
+    ['dragenter', 'dragover'].forEach(name => {
+      dropArea.addEventListener(name, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dropArea.classList.add('dragover');
+      });
+    });
+    ['dragleave', 'drop'].forEach(name => {
+      dropArea.addEventListener(name, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dropArea.classList.remove('dragover');
+      });
+    });
+    dropArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        showUploadedBadge(file.name);
+        appendLog('sys', `SYS: Dropped file loaded: ${file.name}`);
+        if (qtBridge && qtBridge.onFileDropped) {
+          qtBridge.onFileDropped(file.name);
+        }
+      }
+    });
+  </script>
+</body>
+</html>

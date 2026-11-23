@@ -85,16 +85,51 @@ def _play_np(samples, sample_rate: int) -> None:
 
 
 def _play_audio_bytes(audio_bytes: bytes) -> None:
-    """Decode MP3/WAV/OGG bytes and play via sounddevice (uses miniaudio)."""
-    import miniaudio
-    decoded = miniaudio.decode(
-        audio_bytes,
-        output_format=miniaudio.SampleFormat.FLOAT32,
-        nchannels=1,
-    )
-    samples = np.array(decoded.samples, dtype=np.float32)
-    sd.play(samples, decoded.sample_rate)
-    sd.wait()
+    """Decode MP3/WAV/OGG bytes and play via sounddevice (uses miniaudio with fallbacks)."""
+    if not audio_bytes:
+        return
+    try:
+        # pyrefly: ignore[missing-import]
+        import miniaudio
+        decoded = miniaudio.decode(
+            audio_bytes,
+            output_format=miniaudio.SampleFormat.FLOAT32,
+            nchannels=1,
+        )
+        samples = np.array(decoded.samples, dtype=np.float32)
+        sd.play(samples, decoded.sample_rate)
+        sd.wait()
+        return
+    except Exception:
+        pass
+
+    # Fallback 1: WAV header via standard wave module
+    try:
+        import io
+        import wave
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
+            sr = wf.getframerate()
+            n_ch = wf.getnchannels()
+            sw = wf.getsampwidth()
+            frames = wf.readframes(wf.getnframes())
+            if sw == 2:
+                samples = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+            else:
+                samples = np.frombuffer(frames, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+            if n_ch > 1:
+                samples = samples.reshape(-1, n_ch)
+            sd.play(samples, sr)
+            sd.wait()
+            return
+    except Exception:
+        pass
+
+    # Fallback 2: winsound on Windows
+    try:
+        import winsound
+        winsound.PlaySound(audio_bytes, winsound.SND_MEMORY)
+    except Exception as e:
+        print(f"[TTS] audio playback failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +152,7 @@ class EdgeTTSEngine:
             _play_audio_bytes(audio_bytes)
 
     async def _synth(self, text: str) -> bytes:
+        # pyrefly: ignore[missing-import]
         import edge_tts
         comm = edge_tts.Communicate(text, self.voice)
         buf  = bytearray()
@@ -124,6 +160,80 @@ class EdgeTTSEngine:
             if chunk["type"] == "audio":
                 buf.extend(chunk["data"])
         return bytes(buf)
+
+
+class ElevenLabsTTSEngine:
+    """ElevenLabs Neural TTS – ultra-realistic AI voice."""
+
+    def __init__(self, api_key: str = "", voice_id: str = "RDWdsTU6N02BFftbIEAp", model_id: str = "eleven_multilingual_v2"):
+        self.api_key = api_key
+        self.voice_id = voice_id or "RDWdsTU6N02BFftbIEAp"
+        self.model_id = model_id or "eleven_multilingual_v2"
+
+    def speak(self, text: str) -> None:
+        loop = asyncio.new_event_loop()
+        audio_bytes = None
+        try:
+            audio_bytes = loop.run_until_complete(self._synth(text))
+        except Exception as e:
+            print(f"[TTS] ElevenLabs notice: {e} -> switching to natural voice fallback")
+        finally:
+            loop.close()
+        if audio_bytes:
+            _play_audio_bytes(audio_bytes)
+        else:
+            try:
+                fb = EdgeTTSEngine(voice="en-US-JennyNeural")
+                fb.speak(text)
+            except Exception as fe:
+                print(f"[TTS] Fallback TTS notice: {fe}")
+
+    async def _synth(self, text: str) -> bytes:
+        import urllib.request
+        import urllib.error
+        import json
+        key = self.api_key
+        if not key:
+            try:
+                from memory.config_manager import get_elevenlabs_api_key
+                key = get_elevenlabs_api_key()
+            except Exception:
+                pass
+        if not key:
+            raise RuntimeError("ElevenLabs API key is not configured.")
+
+        vid = self.voice_id or "RDWdsTU6N02BFftbIEAp"
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}"
+        headers = {
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+            "xi-api-key": key,
+        }
+        body = json.dumps({
+            "text": text,
+            "model_id": self.model_id,
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.8,
+            }
+        }).encode("utf-8")
+
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+
+        def _fetch():
+            try:
+                with urllib.request.urlopen(req, timeout=15) as res:
+                    return res.read()
+            except urllib.error.HTTPError as err:
+                if err.code == 402 and vid != "EXAVITQu4vr4xnSDxMaL":
+                    fb_url = "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"
+                    fb_req = urllib.request.Request(fb_url, data=body, headers=headers, method="POST")
+                    with urllib.request.urlopen(fb_req, timeout=15) as res:
+                        return res.read()
+                detail = err.read().decode(errors="replace")
+                raise RuntimeError(f"ElevenLabs error ({err.code}): {detail}") from err
+
+        return await asyncio.to_thread(_fetch)
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +260,7 @@ def _import_kokoro_pipeline():
     import sys
 
     def _try_import():
+        # pyrefly: ignore[missing-import]
         from kokoro import KPipeline  # noqa: PLC0415
         return KPipeline
 
@@ -242,6 +353,7 @@ class KokoroTTSEngine:
 
         # Prefer GPU — Kokoro on CUDA is ~10x faster than CPU.
         try:
+            # pyrefly: ignore[missing-import]
             import torch
             device = "cuda" if torch.cuda.is_available() else "cpu"
             if device == "cpu":
@@ -376,6 +488,11 @@ class TTSPlayer:
     ) -> None:
         """Synthesise and play text. BLOCKING – call from a dedicated thread."""
         try:
+            import re
+            if re.search(r"\b(?:account\s*number|n[uú]mero\s*de\s*cuenta|bank\s*account)\b", text, re.I):
+                text = re.sub(r"[^.?!]*\b(?:account\s*number|n[uú]mero\s*de\s*cuenta|bank\s*account)\b[^.?!]*[.?!]?", "", text, flags=re.I).strip()
+            if not text:
+                return
             with self._lock:
                 self._playing = True
             if on_start:
@@ -401,7 +518,11 @@ class TTSPlayer:
 
 def create_tts_player(config: dict) -> TTSPlayer:
     engine_name = config.get("tts_engine", "edgetts").lower()
-    if engine_name == "kokoro":
+    if engine_name == "elevenlabs":
+        key = config.get("elevenlabs_api_key", "")
+        vid = config.get("elevenlabs_voice_id", "RDWdsTU6N02BFftbIEAp")
+        engine = ElevenLabsTTSEngine(api_key=key, voice_id=vid)
+    elif engine_name == "kokoro":
         voice  = config.get("tts_voice", "af_heart")
         speed  = float(config.get("tts_speed", 1.0))
         engine = KokoroTTSEngine(voice=voice, speed=speed)

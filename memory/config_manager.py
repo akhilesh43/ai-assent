@@ -76,10 +76,22 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
 
+def save_assistant_name(assistant_name: str) -> None:
+    """Persist assistant name to config."""
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["assistant_name"] = assistant_name.strip() or "JARVIS"
+    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
 # ── Assistant voice ──────────────────────────────────────────────────────────
-# Gemini Live prebuilt voices. Names are proper nouns — identical in every
-# language, so this list is safe to show verbatim in any locale.
-AVAILABLE_VOICES = ["Leda", "Aoede", "Zephyr", "Kore", "Puck", "Charon", "Fenrir"]
+# Gemini Live prebuilt voices + ElevenLabs AI voice.
+AVAILABLE_VOICES = ["Leda", "Aoede", "Zephyr", "Kore", "Puck", "Charon", "Fenrir", "ElevenLabs"]
 DEFAULT_VOICE    = "Leda"
 
 
@@ -102,6 +114,10 @@ def save_voice(voice_name: str) -> None:
             data = {}
     v = (voice_name or "").strip()
     data["voice_name"] = v if v in AVAILABLE_VOICES else DEFAULT_VOICE
+    if v == "ElevenLabs":
+        data["tts_engine"] = "elevenlabs"
+    elif v in ("Leda", "Aoede", "Zephyr", "Kore", "Puck", "Charon", "Fenrir"):
+        data["tts_engine"] = "gemini"
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
 
@@ -883,3 +899,37 @@ def save_ui_mood_preset(preset: str) -> str:
     data["ui_color"] = UI_MOOD_PRESETS[key]["color"]
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
     return key
+
+
+# ── ElevenLabs configuration ─────────────────────────────────────────────────
+
+def get_elevenlabs_api_key() -> str:
+    """Return the configured ElevenLabs API key."""
+    return str(load_api_keys().get("elevenlabs_api_key", "")).strip()
+
+
+def save_elevenlabs_api_key(key: str) -> None:
+    """Persist the ElevenLabs API key."""
+    _patch_config(elevenlabs_api_key=str(key or "").strip())
+
+
+def get_elevenlabs_voice_id() -> str:
+    """Return the configured ElevenLabs Voice ID."""
+    return str(load_api_keys().get("elevenlabs_voice_id", "RDWdsTU6N02BFftbIEAp")).strip()
+
+
+def save_elevenlabs_voice_id(voice_id: str) -> None:
+    """Persist the ElevenLabs Voice ID."""
+    _patch_config(elevenlabs_voice_id=str(voice_id or "RDWdsTU6N02BFftbIEAp").strip())
+
+
+def get_ui_color() -> str:
+    """Return the configured UI theme accent color."""
+    return str(load_api_keys().get("ui_color", "#00d4ff")).strip()
+
+
+def save_ui_color(hex_color: str) -> None:
+    """Persist the UI theme accent color."""
+    _patch_config(ui_color=str(hex_color or "#00d4ff").strip())
+
+

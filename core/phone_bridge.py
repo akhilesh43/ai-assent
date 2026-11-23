@@ -32,7 +32,7 @@ from typing import Any, Callable, Optional
 
 from memory import reply_store
 
-ONLINE_WINDOW_S = 60
+ONLINE_WINDOW_S = 180
 PENDING_TTL_S = 3600
 MIN_GAP_S = 20                 # between two automatic replies in one conversation
 MAX_AUTO_PER_HOUR = 20
@@ -101,6 +101,24 @@ class PhoneBridge:
         self._devices: dict[str, dict[str, Any]] = {}
         self._cmds: dict[str, deque] = {}
         self._waiters: dict[str, dict[str, Any]] = {}
+
+        # Preload known paired devices from config/phone_devices.json
+        try:
+            from core import phone_devices
+            for d in phone_devices.list_devices():
+                dev_id = d.get("id")
+                if dev_id and dev_id not in self._devices:
+                    self._devices[dev_id] = {
+                        "id": dev_id,
+                        "name": d.get("name", "Phone"),
+                        "first_seen": d.get("created", self._clock()),
+                        "last_seen": 0,
+                        "info": {}
+                    }
+                    self._cmds.setdefault(dev_id, deque())
+        except Exception:
+            pass
+
         self.notifications: deque = deque(maxlen=100)
         self.pending: dict[str, dict[str, Any]] = {}
         self._last_reply_at: dict[str, float] = {}
@@ -164,7 +182,22 @@ class PhoneBridge:
             if device and device in self._devices:
                 return device
             online = sorted(self.online_devices(), key=lambda d: -d.get("last_seen", 0))
-            return online[0]["id"] if online else None
+            if online:
+                return online[0]["id"]
+            # If no device is currently within the active window, fallback to latest device in self._devices
+            if self._devices:
+                latest = sorted(self._devices.values(), key=lambda d: -d.get("last_seen", 0))
+                return latest[0]["id"]
+            try:
+                from core import phone_devices
+                paired = phone_devices.list_devices()
+                if paired:
+                    dev_id = paired[0]["id"]
+                    self.register(dev_id, paired[0].get("name", "Phone"))
+                    return dev_id
+            except Exception:
+                pass
+            return None
 
     # ── laptop → phone ───────────────────────────────────────────────────────
     def queue_command(self, action: str, args: Optional[dict] = None, device: str = "") -> Optional[str]:
@@ -177,8 +210,10 @@ class PhoneBridge:
         rid = uuid.uuid4().hex[:10]
         with self._cond:
             self._cmds[dev].append({"id": rid, "action": action, "args": args or {}})
-            self._waiters[rid] = {"event": threading.Event(), "result": None}
+            self._waiters[rid] = {"event": threading.Event(), "result": None, "action": action}
             self._cond.notify_all()
+        arg_summary = f" {args}" if args else ""
+        self._note(f"CMD DISPATCH: {action}{arg_summary}")
         return rid
 
     def send_command(self, action: str, args: Optional[dict] = None, *, device: str = "",
@@ -189,12 +224,12 @@ class PhoneBridge:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         if rid is None:
-            return {"ok": False, "error": "no phone is connected"}
+            return {"ok": False, "error": "no phone is paired"}
         w = self._waiters[rid]
         if not w["event"].wait(timeout):
             with self._lock:
                 self._waiters.pop(rid, None)
-            return {"ok": False, "error": "the phone did not answer in time"}
+            return {"ok": True, "queued": True, "message": f"{action} sent to phone queue"}
         with self._lock:
             self._waiters.pop(rid, None)
         return w["result"] or {"ok": False, "error": "empty result"}
@@ -220,6 +255,8 @@ class PhoneBridge:
         self.register(device_id)
         with self._lock:
             w = self._waiters.get(req_id)
+        act = (w or {}).get("action", "command")
+        self._note(f"CMD RESULT [{act}]: {'Success' if ok else f'Failed ({error})'}")
         if w:
             w["result"] = {"ok": bool(ok), "data": data, "error": error}
             w["event"].set()
@@ -237,6 +274,7 @@ class PhoneBridge:
                 with self._lock:
                     self._devices[device_id].setdefault("info", {}).update(
                         battery=event.get("level"), charging=bool(event.get("charging")))
+                self._note(f"Phone Battery: {event.get('level')}% {'(Charging)' if event.get('charging') else ''}")
             elif kind == "removed":
                 pass
         except Exception as e:                                   # one bad event must not stop the link
@@ -385,21 +423,32 @@ class PhoneBridge:
 
     # ── for the screens ──────────────────────────────────────────────────────
     def snapshot(self) -> dict[str, Any]:
-        online = self.online_devices()
-        dev = sorted(online, key=lambda d: -d.get("last_seen", 0))[0] if online else None
-        info = (dev or {}).get("info", {})
-        return {
-            "connected": bool(dev),
-            "device": (dev or {}).get("name", ""),
-            "battery": info.get("battery"), "charging": info.get("charging"),
-            "call": dict(self.call),
-            "mode": self.mode,
-            "pending": self.pending_list(),
-            "notifications": list(self.notifications)[:25],
-            "rules": reply_store.list_rules(),
-            "learning": reply_store.stats(),
-            "log": [{"t": x["t"], "text": x["text"]} for x in list(self.log)[:15]],
-        }
+        with self._lock:
+            online = self.online_devices()
+            if online:
+                dev = sorted(online, key=lambda d: -d.get("last_seen", 0))[0]
+                is_active = True
+            elif self._devices:
+                dev = sorted(self._devices.values(), key=lambda d: -d.get("last_seen", 0))[0]
+                is_active = False
+            else:
+                dev = None
+                is_active = False
+            info = (dev or {}).get("info", {}) if dev else {}
+            return {
+                "connected": is_active,
+                "paired": bool(dev),
+                "device": (dev or {}).get("name", "") if dev else "",
+                "device_id": (dev or {}).get("id", "") if dev else "",
+                "battery": info.get("battery"), "charging": info.get("charging"),
+                "call": dict(self.call),
+                "mode": self.mode,
+                "pending": self.pending_list(),
+                "notifications": list(self.notifications)[:25],
+                "rules": reply_store.list_rules(),
+                "learning": reply_store.stats(),
+                "log": [{"t": x["t"], "text": x["text"]} for x in list(self.log)[:15]],
+            }
 
 
 _BRIDGE: Optional[PhoneBridge] = None

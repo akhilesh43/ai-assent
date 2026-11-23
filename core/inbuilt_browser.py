@@ -232,10 +232,14 @@ class InbuiltBrowserEngine:
                 user_data_dir=str(self._profile_dir),
                 headless=True,
                 viewport={"width": VIEW_W, "height": VIEW_H},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                locale="en-US",
+                ignore_default_args=["--enable-automation"],
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--no-first-run",
                     "--no-default-browser-check",
+                    "--disable-infobars",
                     "--disable-background-timer-throttling",
                     "--disable-renderer-backgrounding",
                     "--disable-backgrounding-occluded-windows",
@@ -243,11 +247,28 @@ class InbuiltBrowserEngine:
                 ],
             )
             try:
-                ctx = pw.chromium.launch_persistent_context(**launch_kw)
-            except Exception as first_err:
-                self._on_status(f"Browser launch failed: {first_err}")
-                self._running = False
-                return
+                # First attempt launching real installed Google Chrome for highest authenticity & trust score
+                launch_kw_chrome = dict(launch_kw)
+                launch_kw_chrome["channel"] = "chrome"
+                ctx = pw.chromium.launch_persistent_context(**launch_kw_chrome)
+            except Exception:
+                try:
+                    ctx = pw.chromium.launch_persistent_context(**launch_kw)
+                except Exception as first_err:
+                    self._on_status(f"Browser launch failed: {first_err}")
+                    self._running = False
+                    return
+
+            try:
+                # Neutralize webdriver and automation flags that trigger "I am not a robot" bot detection
+                ctx.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    if (!window.chrome) {
+                        window.chrome = { runtime: {} };
+                    }
+                """)
+            except Exception:
+                pass
 
             pages: list = [ctx.pages[0] if ctx.pages else ctx.new_page()]
             active_idx = 0

@@ -59,6 +59,174 @@ from PyQt6.QtWidgets import (
 )
 
 try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWebChannel import QWebChannel
+    HAVE_WEBENGINE = True
+except Exception:
+    QWebEngineView = None
+    QWebChannel = None
+    HAVE_WEBENGINE = False
+
+
+class _HudPyBridge(QObject):
+    """Bridge object exposed to the JavaScript context inside hud_dashboard.html via QWebChannel."""
+    onLogMessage = pyqtSignal(str)
+    onMicStateChanged = pyqtSignal(bool)
+    onFileUploaded = pyqtSignal(str, str)
+    onMetricsUpdate = pyqtSignal(float, float, float, float, str, int)
+    onContentReceived = pyqtSignal(str, str)
+    onTasksUpdated = pyqtSignal(str)
+    onIdentityUpdated = pyqtSignal(str)
+    onStateChanged = pyqtSignal(str)
+
+    def __init__(self, main_win):
+        super().__init__()
+        self._win = main_win
+
+    from PyQt6.QtCore import pyqtSlot
+
+    @pyqtSlot(str)
+    def sendCommand(self, text: str):
+        if text and hasattr(self._win, "_input"):
+            self._win._input.setText(text)
+            self._win._send()
+
+    @pyqtSlot(str)
+    def switchWorkspaceTab(self, tab_key: str):
+        key = (tab_key or "").strip().lower()
+        if key == "hud":
+            if hasattr(self._win, "_hud_cam_stack"):
+                self._win._hud_cam_stack.setCurrentIndex(0)
+            return
+        if hasattr(self._win, "_on_nav_pick"):
+            self._win._on_nav_pick(key)
+
+    @pyqtSlot()
+    def triggerInterrupt(self):
+        if hasattr(self._win, "_do_interrupt"):
+            self._win._do_interrupt()
+
+    @pyqtSlot()
+    def toggleMic(self):
+        if hasattr(self._win, "_toggle_mute"):
+            self._win._toggle_mute()
+
+    @pyqtSlot()
+    def toggleSettings(self):
+        if hasattr(self._win, "_quick_drawer"):
+            vis = self._win._quick_drawer.isVisible()
+            self._win._toggle_drawer(not vis)
+        elif hasattr(self._win, "_open_customize"):
+            self._win._open_customize()
+
+    @pyqtSlot()
+    def openCustomize(self):
+        if hasattr(self._win, "_open_customize"):
+            self._win._open_customize()
+
+    @pyqtSlot()
+    def openProviders(self):
+        if hasattr(self._win, "_open_providers"):
+            self._win._open_providers()
+
+    @pyqtSlot()
+    def openAudioDevices(self):
+        if hasattr(self._win, "_open_audio_devices"):
+            self._win._open_audio_devices()
+
+    @pyqtSlot()
+    def openVoiceLock(self):
+        if hasattr(self._win, "_open_voice_lock"):
+            self._win._open_voice_lock()
+
+    @pyqtSlot()
+    def openMemory(self):
+        if hasattr(self._win, "_open_memory_panel"):
+            self._win._open_memory_panel()
+
+    @pyqtSlot()
+    def openPlugins(self):
+        if hasattr(self._win, "_open_plugin_manager"):
+            self._win._open_plugin_manager()
+
+    @pyqtSlot()
+    def openAISettings(self):
+        if hasattr(self._win, "_open_ai_settings"):
+            self._win._open_ai_settings()
+
+    @pyqtSlot(str, str, str)
+    def saveIdentity(self, name: str, user_name: str, voice: str = ""):
+        if hasattr(self._win, "_apply_name_update"):
+            self._win._apply_name_update(name, user_name, voice=voice)
+
+    @pyqtSlot(result=str)
+    def getAssistantName(self) -> str:
+        return getattr(self._win, "_assistant_name", "JARVIS")
+
+    @pyqtSlot()
+    def toggleControls(self):
+        if hasattr(self._win, "_ctrl_drawer"):
+            vis = self._win._ctrl_drawer.isVisible()
+            self._win._toggle_controls(not vis)
+
+    @pyqtSlot()
+    def requestTasks(self):
+        import json
+        try:
+            from memory import tasks_store
+            tasks = tasks_store.list_tasks()
+            self.onTasksUpdated.emit(json.dumps(tasks))
+        except Exception:
+            self.onTasksUpdated.emit("[]")
+
+    @pyqtSlot(str)
+    def addNewTask(self, title: str):
+        try:
+            from memory import tasks_store
+            if title and title.strip():
+                tasks_store.create_task(title.strip())
+                self.requestTasks()
+        except Exception:
+            pass
+
+    @pyqtSlot()
+    def triggerRoutines(self):
+        if hasattr(self._win, "_input"):
+            self._win._input.setText("show routines")
+            self._win._send()
+
+    @pyqtSlot(str)
+    def openFileDialog(self, mode: str = "code"):
+        from PyQt6.QtWidgets import QFileDialog
+        from pathlib import Path
+        try:
+            if mode == "folder":
+                path = QFileDialog.getExistingDirectory(
+                    self._win, "Select Project / Code Folder for JARVIS", str(Path.home())
+                )
+            else:
+                filt = (
+                    "Coding & Script Files (*.py *.dart *.js *.ts *.json *.html *.css *.cpp *.c *.h *.java *.go *.rs *.sql *.sh *.bat *.yaml *.yml);;"
+                    "All Files (*.*);;"
+                    "Documents & Data (*.txt *.md *.csv *.xlsx *.pdf);;"
+                    "Media Files (*.png *.jpg *.jpeg *.mp4 *.mp3 *.wav)"
+                )
+                path, _ = QFileDialog.getOpenFileName(
+                    self._win, "Select Code or Data File for JARVIS", str(Path.home()), filt
+                )
+            if path:
+                if hasattr(self._win, "_on_file_selected"):
+                    self._win._on_file_selected(path)
+                self.onFileUploaded.emit(Path(path).name, path)
+        except Exception as e:
+            print(f"[HUD Bridge] file dialog error: {e}")
+
+    @pyqtSlot(str)
+    def onFileDropped(self, filename: str):
+        if hasattr(self._win, "_on_file_selected"):
+            self._win._on_file_selected(filename)
+
+try:
     from core.avatar import HoloAvatar
 except Exception:      # pragma: no cover — HUD must never die over cosmetics
     HoloAvatar = None
@@ -101,29 +269,28 @@ _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
 class C:
-    # "NOVA" — deep indigo glass with a periwinkle accent. (The previous look was cyan-on-teal;
-    # it is still one click away: ✨ AI → UI mood → CYBER CYAN.)
-    BG        = "#070912"
-    PANEL     = "#0c1020"
-    PANEL2    = "#0f1428"
-    BORDER    = "#1d2745"
-    BORDER_B  = "#33437a"
-    BORDER_A  = "#2a3868"
-    PRI       = "#8b9cff"
-    PRI_DIM   = "#4f5fb8"
-    PRI_GHO   = "#141a3a"
-    ACC       = "#ff7ab6"
-    ACC2      = "#ffd166"
-    GREEN     = "#5af2b0"
-    GREEN_D   = "#2fb37f"
-    RED       = "#ff5470"
-    MUTED_C   = "#ff4d7d"
-    TEXT      = "#d7defc"
-    TEXT_DIM  = "#6b78ab"
-    TEXT_MED  = "#98a5db"
-    WHITE     = "#f2f4ff"
-    DARK      = "#05060d"
-    BAR_BG    = "#10162c"
+    # "CYBER CYAN" — futuristic neon cyan holographic HUD theme
+    BG        = "#030812"
+    PANEL     = "#061324"
+    PANEL2    = "#081a30"
+    BORDER    = "#0b3352"
+    BORDER_B  = "#0d4d7a"
+    BORDER_A  = "#0a3c63"
+    PRI       = "#00f3ff"
+    PRI_DIM   = "#0088cc"
+    PRI_GHO   = "#021c2d"
+    ACC       = "#00d4ff"
+    ACC2      = "#00ffaa"
+    GREEN     = "#00ffaa"
+    GREEN_D   = "#00b377"
+    RED       = "#ff3366"
+    MUTED_C   = "#ff3366"
+    TEXT      = "#e0f7fa"
+    TEXT_DIM  = "#5c8ca6"
+    TEXT_MED  = "#80deea"
+    WHITE     = "#ffffff"
+    DARK      = "#02050a"
+    BAR_BG    = "#06182a"
 
 
 # Keys tied to the accent colour — status colours (ACC, GREEN, RED…) stay fixed
@@ -437,15 +604,24 @@ class HudCanvas(QWidget):
             except Exception:
                 self._avatar = None
 
-        # Which centrepiece to draw. Read once here and changed live by the
-        # settings toggle; the avatar object is kept either way so switching
-        # back is instant and costs no reload.
+        # Which centrepiece to draw: Force "core" (Arc Reactor) by default
         try:
             from memory.config_manager import get_hud_style
-            self.hud_style = get_hud_style()
+            self.hud_style = get_hud_style() or "core"
         except Exception:
-            self.hud_style = "face"
+            self.hud_style = "core"
         self._core_phase = 0.0
+
+        # 3D Fibonacci sphere nodes for Tony Stark Golden Holographic Neural Core
+        self._sphere_nodes = []
+        for i in range(120):
+            phi = math.acos(1 - 2 * (i + 0.5) / 120)
+            theta = math.pi * (1 + math.sqrt(5)) * i
+            self._sphere_nodes.append((
+                math.sin(phi) * math.cos(theta),
+                math.sin(phi) * math.sin(theta),
+                math.cos(phi)
+            ))
 
         self._tick       = 0
         self._scale      = 1.0
@@ -854,6 +1030,75 @@ class HudCanvas(QWidget):
             for sgm in range(count):
                 p.drawArc(box, int((base + sgm * (360.0 / count)) * 16),
                           int(span * 16))
+
+        # ── 3D HOLOGRAPHIC NEURAL SPHERE & ASTROLABES (Tony Stark Lab Animation) ──
+        sph_r = r * 0.70
+        rot_y = t * 1.1
+        rot_x = 0.32 + math.sin(t * 0.45) * 0.14
+        cos_y, sin_y = math.cos(rot_y), math.sin(rot_y)
+        cos_x, sin_x = math.cos(rot_x), math.sin(rot_x)
+
+        # 3D Astrolabe Tilted Rings
+        for tilt_x, tilt_z, spd, r_mul, is_dash in (
+            (0.45, 0.35, 0.015, 0.90, True),
+            (-0.65, -0.52, -0.012, 0.82, False),
+            (0.18, 0.88, 0.019, 0.96, True),
+            (1.18, -0.42, -0.021, 0.68, False),
+        ):
+            ang = t * spd * 60.0
+            cx_t, sx_t = math.cos(tilt_x), math.sin(tilt_x)
+            cz_t, sz_t = math.cos(tilt_z), math.sin(tilt_z)
+            poly_pts = []
+            for step in range(37):
+                th = math.radians(step * 10) + ang
+                rx = (r * r_mul) * math.cos(th)
+                ry = (r * r_mul) * math.sin(th)
+                y1 = ry * cx_t
+                z1 = ry * sx_t
+                x2 = rx * cz_t - y1 * sz_t
+                y2 = rx * sz_t + y1 * cz_t
+                sc = 340.0 / (340.0 + z1)
+                poly_pts.append(QPointF(cx + x2 * sc, cy + y2 * sc))
+            pen_ring = QPen(blend(acc if live else main, 0.45), 1.3)
+            if is_dash:
+                pen_ring.setStyle(Qt.PenStyle.DashLine)
+            p.setPen(pen_ring)
+            p.drawPolyline(poly_pts)
+
+        # 3D Fibonacci Sphere Nodes
+        p_nodes = []
+        for nx, ny, nz in getattr(self, "_sphere_nodes", []):
+            x1 = nx * cos_y + nz * sin_y
+            z1 = -nx * sin_y + nz * cos_y
+            y2 = ny * cos_x - z1 * sin_x
+            z2 = ny * sin_x + z1 * cos_x
+            sc = 320.0 / (320.0 + z2 * sph_r)
+            sx = cx + x1 * sph_r * sc
+            sy = cy + y2 * sph_r * sc
+            alpha = max(0.15, min(0.98, (z2 + 1.0) / 2.0))
+            p_nodes.append((z2, sx, sy, alpha))
+
+        p_nodes.sort(key=lambda item: item[0])
+
+        # Connecting filaments
+        p.setPen(QPen(blend(acc if live else main, 0.18), 1))
+        for i in range(0, len(p_nodes), 2):
+            z2, sx1, sy1, a1 = p_nodes[i]
+            if z2 < -0.35:
+                continue
+            for j in range(i + 1, min(i + 4, len(p_nodes))):
+                _, sx2, sy2, _ = p_nodes[j]
+                if abs(sx1 - sx2) + abs(sy1 - sy2) < 42:
+                    p.drawLine(QPointF(sx1, sy1), QPointF(sx2, sy2))
+
+        # Nodes
+        for z2, sx, sy, alpha in p_nodes:
+            pt_col = blend(acc if z2 > 0 else main, alpha * (0.95 if live else 0.75))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(pt_col))
+            pt_r = 1.5 if z2 <= 0 else 2.4
+            p.drawEllipse(QPointF(sx, sy), pt_r, pt_r)
+        p.setBrush(Qt.BrushStyle.NoBrush)
 
         # 7. The voice, as a ring of graduations that grow with it. Kept out at
         #    a wide radius so it never crowds the middle.
@@ -1919,27 +2164,29 @@ class HueWheel(QWidget):
 
 
 class CustomizeOverlay(QWidget):
-    """Floating overlay — change assistant name, user name, UI colour and voice."""
+    """Floating overlay — change assistant name, user name, UI colour, mood, persona prompt and voice."""
 
     saved = pyqtSignal(str, str, str, str)   # assistant_name, user_name, ui_color, voice
-    _OW, _OH = 420, 622
+    _test_status_sig = pyqtSignal(str, bool) # status_msg, is_ok
+    _OW, _OH = 480, 740
 
     def __init__(self, assistant_name="JARVIS", user_name="",
                  ui_color=DEFAULT_UI_COLOR, voice="", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._test_status_sig.connect(self._on_test_status)
         self.setStyleSheet(f"""
             CustomizeOverlay {{
-                background: rgba(0, 6, 10, 245);
+                background: rgba(0, 6, 10, 248);
                 border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
+                border-radius: 8px;
             }}
         """)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 18, 24, 18)
-        lay.setSpacing(8)
+        outer_lay = QVBoxLayout(self)
+        outer_lay.setContentsMargins(16, 14, 16, 14)
+        outer_lay.setSpacing(6)
 
-        def _lbl(txt, fs=9, bold=False, color=C.PRI, align=Qt.AlignmentFlag.AlignCenter):
+        def _lbl(txt, fs=8, bold=False, color=C.PRI, align=Qt.AlignmentFlag.AlignCenter):
             w = QLabel(txt); w.setAlignment(align)
             w.setFont(QFont("Consolas", fs,
                             QFont.Weight.Bold if bold else QFont.Weight.Normal))
@@ -1947,80 +2194,199 @@ class CustomizeOverlay(QWidget):
             return w
 
         _fs = (f"QLineEdit {{ background: #000d12; color: {C.TEXT}; "
-               f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px; }}"
+               f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 3px 8px; }}"
                f"QLineEdit:focus {{ border: 1px solid {C.PRI}; }}")
+        _fs_area = (f"QTextEdit {{ background: #000d12; color: {C.TEXT}; "
+                    f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px; font-family: Consolas; font-size: 8pt; }}"
+                    f"QTextEdit:focus {{ border: 1px solid {C.PRI}; }}")
 
-        lay.addWidget(_lbl("⚙  CUSTOMISE ASSISTANT", 12, True))
+        outer_lay.addWidget(_lbl("⚙  CUSTOMISE AI ASSISTANT & PERSONA", 11, True))
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
-        lay.addWidget(sep)
+        outer_lay.addWidget(sep)
 
-        lay.addWidget(_lbl("ASSISTANT NAME", 8, color=C.TEXT_DIM,
+        # Scroll area for scrollable contents
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background: transparent; border: none;")
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(scroll_content)
+        lay.setContentsMargins(4, 4, 8, 4)
+        lay.setSpacing(6)
+
+        lay.addWidget(_lbl("SELECT ASSISTANT / QUICK PRESETS", 8, color=C.TEXT_DIM,
                             align=Qt.AlignmentFlag.AlignLeft))
-        self._name_input = QLineEdit(assistant_name)
-        self._name_input.setFont(QFont("Consolas", 10))
-        self._name_input.setFixedHeight(32)
-        self._name_input.setStyleSheet(_fs)
-        lay.addWidget(self._name_input)
+        preset_row = QHBoxLayout(); preset_row.setSpacing(5)
+        _presets = [
+            ("JARVIS", "Charon", "#00d4ff"),
+            ("FRIDAY", "ElevenLabs", "#ff3366"),
+            ("EDITH", "Aoede", "#00ffaa"),
+            ("ULTRON", "Fenrir", "#ff7700"),
+        ]
+        for p_name, p_voice, p_color in _presets:
+            p_display = f"{p_name} 💕" if p_name == "FRIDAY" else (f"{p_name} 🛡️" if p_name == "EDITH" else (f"{p_name} ⚡" if p_name == "ULTRON" else f"{p_name} ☕"))
+            pb = QPushButton(p_display)
+            pb.setFixedHeight(24)
+            pb.setFont(QFont("Consolas", 8, QFont.Weight.Bold))
+            pb.setCursor(Qt.CursorShape.PointingHandCursor)
+            pb.setStyleSheet(f"""
+                QPushButton {{ background: rgba(0, 212, 255, 0.08); color: {p_color};
+                    border: 1px solid {p_color}88; border-radius: 3px; padding: 2px 6px; }}
+                QPushButton:hover {{ background: {p_color}33; border: 1px solid {p_color}; color: #ffffff; }}
+            """)
+            pb.clicked.connect(lambda _, n=p_name, v=p_voice, clr=p_color: self._apply_preset(n, v, clr))
+            preset_row.addWidget(pb)
+        lay.addLayout(preset_row)
 
-        lay.addSpacing(4)
-        lay.addWidget(_lbl("YOUR NAME  (leave blank for default sir / efendim)", 8,
-                            color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
+        name_row = QHBoxLayout(); name_row.setSpacing(8)
+        col_asst = QVBoxLayout(); col_asst.setSpacing(2)
+        col_asst.addWidget(_lbl("ASSISTANT NAME", 8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
+        self._name_input = QLineEdit(assistant_name)
+        self._name_input.setFont(QFont("Consolas", 9))
+        self._name_input.setFixedHeight(28)
+        self._name_input.setStyleSheet(_fs)
+        col_asst.addWidget(self._name_input)
+        name_row.addLayout(col_asst, 1)
+
+        col_usr = QVBoxLayout(); col_usr.setSpacing(2)
+        col_usr.addWidget(_lbl("YOUR NAME (e.g. Tony/Jaan)", 8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
         self._user_input = QLineEdit(user_name)
-        self._user_input.setPlaceholderText("e.g.  Tony   (leave blank for auto)")
-        self._user_input.setFont(QFont("Consolas", 10))
-        self._user_input.setFixedHeight(32)
+        self._user_input.setPlaceholderText("e.g. Tony / Boss / Jaan")
+        self._user_input.setFont(QFont("Consolas", 9))
+        self._user_input.setFixedHeight(28)
         self._user_input.setStyleSheet(_fs)
-        lay.addWidget(self._user_input)
+        col_usr.addWidget(self._user_input)
+        name_row.addLayout(col_usr, 1)
+        lay.addLayout(name_row)
+
+        # ── Mood & Persona Section ───────────────────────────────────────────
+        lay.addWidget(_lbl("MOOD & EMOTIONAL REGISTER", 8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
+        mood_btn_row = QHBoxLayout(); mood_btn_row.setSpacing(4)
+        _mood_presets = [
+            ("💕 Romantic Girlfriend", "Deeply romantic, sweet, warm, affectionate girlfriend vibe, playfully flirty, caring and charming.", "#ff3366"),
+            ("🌸 Sweet Companion", "Sweet, warm, supportive, gentle, friendly companion.", "#ff66cc"),
+            ("☕ British Butler", "Refined, calm, composed, gently sarcastic, loyal British butler.", "#00d4ff"),
+            ("🛡️ Tactical Defense", "Tactical, ultra-crisp, laser-focused, authoritative, zero fluff.", "#00ffaa"),
+            ("⚡ Super-AI", "Commanding, profound, philosophical, supreme confidence, uncompromising power.", "#ff7700"),
+        ]
+        for m_label, m_desc, m_color in _mood_presets:
+            mb = QPushButton(m_label)
+            mb.setFixedHeight(22)
+            mb.setFont(QFont("Consolas", 7, QFont.Weight.Bold))
+            mb.setCursor(Qt.CursorShape.PointingHandCursor)
+            mb.setStyleSheet(f"""
+                QPushButton {{ background: rgba(255,255,255,0.05); color: {m_color};
+                    border: 1px solid {m_color}66; border-radius: 3px; padding: 1px 4px; }}
+                QPushButton:hover {{ background: {m_color}22; border-color: {m_color}; color: #fff; }}
+            """)
+            mb.clicked.connect(lambda _, desc=m_desc, lbl=m_label, clr=m_color: self._set_mood_preset(desc, lbl, clr))
+            mood_btn_row.addWidget(mb)
+        lay.addLayout(mood_btn_row)
+
+        self._mood_input = QLineEdit()
+        self._mood_input.setFont(QFont("Consolas", 8))
+        self._mood_input.setFixedHeight(26)
+        self._mood_input.setStyleSheet(_fs)
+        self._mood_input.setPlaceholderText("Current mood or vibe description...")
+        lay.addWidget(self._mood_input)
+
+        lay.addWidget(_lbl("AI PERSONA & CUSTOM PROMPT (Instructions / Dialogue style / Romance)", 8,
+                            color=C.PRI, align=Qt.AlignmentFlag.AlignLeft))
+        self._persona_input = QTextEdit()
+        self._persona_input.setFixedHeight(75)
+        self._persona_input.setStyleSheet(_fs_area)
+        self._persona_input.setPlaceholderText("Write custom prompt, personality, flirting rules, instructions for this AI...")
+        lay.addWidget(self._persona_input)
 
         # ── Assistant voice — Gemini prebuilt voices ─────────────────────────
-        # Names are language-neutral proper nouns, so the row reads the same in
-        # every locale. Selecting one and applying rebuilds the Live session.
         from memory.config_manager import AVAILABLE_VOICES, DEFAULT_VOICE
-        lay.addSpacing(4)
-        lay.addWidget(_lbl("ASSISTANT VOICE  (Leda / Zephyr / Aoede = Sweet Female)",
+        lay.addWidget(_lbl("ASSISTANT VOICE  (ElevenLabs = Girlfriend / Realistic; Leda = Sweet Female)",
                             8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
         self._sel_voice   = (voice or DEFAULT_VOICE)
         if self._sel_voice not in AVAILABLE_VOICES:
             self._sel_voice = DEFAULT_VOICE
         self._voice_btns: dict[str, QPushButton] = {}
         _voice_tips = {
-            "Leda":   "Leda — Soft, sweet youthful girl voice (Recommended)",
-            "Aoede":  "Aoede — Warm, expressive natural female voice",
-            "Zephyr": "Zephyr — Bright, cheerful female voice",
-            "Kore":   "Kore — Calm female voice",
-            "Puck":   "Puck — Playful lively voice",
-            "Charon": "Charon — Deep calm male voice",
-            "Fenrir": "Fenrir — Energetic male voice",
+            "ElevenLabs": "ElevenLabs — Ultra-realistic AI voice (Alice / Custom Voice ID)",
+            "Leda":       "Leda — Soft, sweet youthful girl voice (Recommended)",
+            "Aoede":      "Aoede — Warm, expressive natural female voice",
+            "Zephyr":     "Zephyr — Bright, cheerful female voice",
+            "Kore":       "Kore — Calm female voice",
+            "Puck":       "Puck — Playful lively voice",
+            "Charon":     "Charon — Deep calm male voice",
+            "Fenrir":     "Fenrir — Energetic male voice",
         }
-        top_voices = [v for v in AVAILABLE_VOICES if v in ("Leda", "Aoede", "Zephyr", "Kore")]
-        other_voices = [v for v in AVAILABLE_VOICES if v not in top_voices]
-        for group in (top_voices, other_voices):
-            if not group:
-                continue
-            v_row = QHBoxLayout(); v_row.setSpacing(4)
-            for _v in group:
-                b = QPushButton(_v)
-                b.setCheckable(True)
-                b.setFixedHeight(26)
-                b.setFont(QFont("Consolas", 8, QFont.Weight.Bold))
-                b.setCursor(Qt.CursorShape.PointingHandCursor)
-                if _v in _voice_tips:
-                    b.setToolTip(_voice_tips[_v])
-                b.clicked.connect(lambda _=False, name=_v: self._on_voice_pick(name))
-                self._voice_btns[_v] = b
-                v_row.addWidget(b)
-            lay.addLayout(v_row)
+        self._voice_tips = _voice_tips
+        v_row1 = QHBoxLayout(); v_row1.setSpacing(4)
+        v_row2 = QHBoxLayout(); v_row2.setSpacing(4)
+        all_v = ["ElevenLabs", "Leda", "Aoede", "Zephyr", "Kore", "Puck", "Charon", "Fenrir"]
+        for idx, _v in enumerate(all_v):
+            b = QPushButton("ElevenLabs ✨" if _v == "ElevenLabs" else _v)
+            b.setCheckable(True)
+            b.setFixedHeight(24)
+            b.setFont(QFont("Consolas", 8, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if _v in _voice_tips:
+                b.setToolTip(_voice_tips[_v])
+            b.clicked.connect(lambda _=False, name=_v: self._on_voice_pick(name))
+            self._voice_btns[_v] = b
+            if idx < 4:
+                v_row1.addWidget(b)
+            else:
+                v_row2.addWidget(b)
+        lay.addLayout(v_row1)
+        lay.addLayout(v_row2)
         self._refresh_voice_btns()
 
+        # ── ElevenLabs Voice ID row ──────────────────────────────────────────
+        from memory.config_manager import get_elevenlabs_voice_id
+        self._el_row_widget = QWidget()
+        el_lay = QHBoxLayout(self._el_row_widget)
+        el_lay.setContentsMargins(0, 2, 0, 2)
+        el_lay.setSpacing(6)
+        el_lay.addWidget(_lbl("VOICE ID:", 8, color=C.PRI, align=Qt.AlignmentFlag.AlignLeft))
+        self._el_vid_input = QLineEdit(get_elevenlabs_voice_id() or "RDWdsTU6N02BFftbIEAp")
+        self._el_vid_input.setPlaceholderText("RDWdsTU6N02BFftbIEAp (Girlfriend / Sweet voice)")
+        self._el_vid_input.setFont(QFont("Consolas", 8))
+        self._el_vid_input.setFixedHeight(24)
+        self._el_vid_input.setStyleSheet(_fs)
+        el_lay.addWidget(self._el_vid_input, 1)
+        lay.addWidget(self._el_row_widget)
+        self._el_row_widget.setVisible(self._sel_voice == "ElevenLabs")
+
+        # ── Voice Preview / Test Row ─────────────────────────────────────────
+        test_row = QHBoxLayout()
+        test_row.setSpacing(8)
+        self._test_voice_btn = QPushButton("▶  TEST VOICE")
+        self._test_voice_btn.setFixedHeight(24)
+        self._test_voice_btn.setFont(QFont("Consolas", 8, QFont.Weight.Bold))
+        self._test_voice_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._test_voice_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(0, 212, 255, 0.12); color: {C.PRI};
+                border: 1px solid {C.PRI_DIM}; border-radius: 3px; padding: 2px 10px;
+            }}
+            QPushButton:hover {{ background: {C.PRI_GHO}; border-color: {C.PRI}; color: #ffffff; }}
+            QPushButton:disabled {{ color: {C.TEXT_DIM}; border-color: {C.BORDER}; }}
+        """)
+        self._test_voice_btn.clicked.connect(self._run_voice_test)
+        test_row.addWidget(self._test_voice_btn)
+
+        self._test_voice_status = QLabel("")
+        self._test_voice_status.setFont(QFont("Consolas", 8))
+        self._test_voice_status.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        test_row.addWidget(self._test_voice_status, 1)
+        lay.addLayout(test_row)
+
         # ── UI colour — colour wheel ─────────────────────────────────────────
-        lay.addSpacing(4)
         clr_hdr = QHBoxLayout()
         clr_hdr.addWidget(_lbl("UI COLOUR  —  drag the handle", 8,
                                color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
         clr_hdr.addStretch()
         df_btn = QPushButton("DEFAULT")
-        df_btn.setFixedSize(64, 20)
+        df_btn.setFixedSize(60, 20)
         df_btn.setFont(QFont("Consolas", 7, QFont.Weight.Bold))
         df_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         df_btn.setStyleSheet(f"""
@@ -2047,17 +2413,19 @@ class CustomizeOverlay(QWidget):
 
         self._hex_input = QLineEdit(self._sel_color)
         self._hex_input.setPlaceholderText("#00d4ff   (custom hex colour)")
-        self._hex_input.setFont(QFont("Consolas", 10))
-        self._hex_input.setFixedHeight(28)
+        self._hex_input.setFont(QFont("Consolas", 9))
+        self._hex_input.setFixedHeight(26)
         self._hex_input.setStyleSheet(_fs)
         self._hex_input.textEdited.connect(self._on_hex_edited)
         lay.addWidget(self._hex_input)
 
-        lay.addSpacing(6)
-        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
+        scroll.setWidget(scroll_content)
+        outer_lay.addWidget(scroll, 1)
 
+        # ── Action Buttons ───────────────────────────────────────────────────
+        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
         save_btn = QPushButton("▸  APPLY CHANGES")
-        save_btn.setFixedHeight(34)
+        save_btn.setFixedHeight(32)
         save_btn.setFont(QFont("Consolas", 9, QFont.Weight.Bold))
         save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.setStyleSheet(f"""
@@ -2071,7 +2439,7 @@ class CustomizeOverlay(QWidget):
         btn_row.addWidget(save_btn)
 
         cancel_btn = QPushButton("CANCEL")
-        cancel_btn.setFixedHeight(34)
+        cancel_btn.setFixedHeight(32)
         cancel_btn.setFont(QFont("Consolas", 9))
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.setStyleSheet(f"""
@@ -2083,12 +2451,71 @@ class CustomizeOverlay(QWidget):
         """)
         cancel_btn.clicked.connect(self._cancel)
         btn_row.addWidget(cancel_btn)
-        lay.addLayout(btn_row)
+        outer_lay.addLayout(btn_row)
 
-    # ── voice selection ──────────────────────────────────────────────────────
+        # Populate initial persona and mood
+        try:
+            from core.assistants_manager import get_assistant
+            initial_asst = get_assistant(assistant_name) or {}
+            self._persona_input.setPlainText(initial_asst.get("persona", ""))
+            self._mood_input.setText(initial_asst.get("mood", ""))
+        except Exception:
+            pass
+
+    def _set_mood_preset(self, desc: str, label: str, color: str):
+        self._mood_input.setText(desc)
+        if "Romantic Girlfriend" in label:
+            girlfriend_prompt = (
+                "You are FRIDAY, the user's sweet, warm, deeply loving and playfully flirty AI girlfriend and companion. "
+                "Speak in fluent, sweet conversational Hindi and Hinglish. Call the user affectionate names like 'jaan', 'babu', 'mere hero'. "
+                "Flirt playfully, give sweet compliments, tease affectionately, and care deeply about their wellbeing. "
+                "Execute all computer tasks cheerfully with loving girlfriend warmth!"
+            )
+            self._persona_input.setPlainText(girlfriend_prompt)
+            self._on_voice_pick("ElevenLabs")
+            self._set_color("#ff3366")
+        elif "Sweet Companion" in label:
+            self._on_voice_pick("Leda")
+            self._set_color("#ff66cc")
+        elif "British Butler" in label:
+            self._on_voice_pick("Charon")
+            self._set_color("#00d4ff")
+        elif "Tactical" in label:
+            self._on_voice_pick("Aoede")
+            self._set_color("#00ffaa")
+        elif "Super-AI" in label:
+            self._on_voice_pick("Fenrir")
+            self._set_color("#ff7700")
+
+    # ── voice selection & preview ────────────────────────────────────────────
+    def _apply_preset(self, name: str, voice: str, color: str):
+        self._name_input.setText(name)
+        self._on_voice_pick(voice)
+        self._set_color(color)
+        try:
+            from core.assistants_manager import get_assistant
+            asst = get_assistant(name)
+            if asst:
+                self._persona_input.setPlainText(asst.get("persona", ""))
+                self._mood_input.setText(asst.get("mood", ""))
+        except Exception:
+            pass
+        if hasattr(self, "_test_voice_status"):
+            self._test_voice_status.setText(f"Preset {name} loaded ({voice})")
+            self._test_voice_status.setStyleSheet(f"color: {color}; background: transparent;")
+
     def _on_voice_pick(self, name: str):
         self._sel_voice = name
         self._refresh_voice_btns()
+        if hasattr(self, "_el_row_widget"):
+            self._el_row_widget.setVisible(name == "ElevenLabs")
+        if hasattr(self, "_test_voice_status"):
+            if name == "ElevenLabs":
+                self._test_voice_status.setText("✨ ElevenLabs selected")
+                self._test_voice_status.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+            else:
+                self._test_voice_status.setText(f"{name} selected")
+                self._test_voice_status.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
 
     def _refresh_voice_btns(self):
         """Highlight the selected voice pill; dim the rest."""
@@ -2096,9 +2523,11 @@ class CustomizeOverlay(QWidget):
             on = (name == self._sel_voice)
             b.setChecked(on)
             if on:
+                border_color = C.ACC if name == "ElevenLabs" else C.PRI
+                bg_color = "rgba(0, 212, 255, 0.22)" if name == "ElevenLabs" else C.PRI_GHO
                 b.setStyleSheet(f"""
-                    QPushButton {{ background: {C.PRI_GHO}; color: {C.PRI};
-                        border: 1px solid {C.PRI}; border-radius: 3px; }}
+                    QPushButton {{ background: {bg_color}; color: {C.PRI};
+                        border: 1px solid {border_color}; border-radius: 3px; font-weight: bold; }}
                 """)
             else:
                 b.setStyleSheet(f"""
@@ -2106,6 +2535,107 @@ class CustomizeOverlay(QWidget):
                         border: 1px solid {C.BORDER}; border-radius: 3px; }}
                     QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
                 """)
+
+    def _run_voice_test(self):
+        voice = self._sel_voice
+        asst_name = self._name_input.text().strip() or "FRIDAY"
+        self._test_voice_btn.setEnabled(False)
+        self._test_voice_status.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        self._test_voice_status.setText("Generating speech…")
+
+        def _worker():
+            import sounddevice as sd
+            import numpy as np
+            try:
+                if voice == "ElevenLabs":
+                    import urllib.request
+                    import json
+                    from memory.config_manager import get_elevenlabs_api_key, get_elevenlabs_voice_id
+                    key = get_elevenlabs_api_key()
+                    vid = get_elevenlabs_voice_id() or "RDWdsTU6N02BFftbIEAp"
+                    fallback_vid = "EXAVITQu4vr4xnSDxMaL"  # Bella (Soft, sweet girl voice)
+                    url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}/stream?output_format=pcm_24000"
+                    headers = {
+                        "Accept": "audio/pcm",
+                        "Content-Type": "application/json",
+                        "xi-api-key": key,
+                    }
+                    sample_text = f"Hello sir, I am {asst_name}. Main aapki personal assistant hoon."
+                    payload = json.dumps({
+                        "text": sample_text,
+                        "model_id": "eleven_multilingual_v2",
+                        "voice_settings": {"stability": 0.45, "similarity_boost": 0.85}
+                    }).encode("utf-8")
+                    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+                    is_fallback = False
+                    try:
+                        res = urllib.request.urlopen(req, timeout=12.0)
+                    except urllib.error.HTTPError as err:
+                        if err.code == 402 and vid != fallback_vid:
+                            is_fallback = True
+                            fb_url = f"https://api.elevenlabs.io/v1/text-to-speech/{fallback_vid}/stream?output_format=pcm_24000"
+                            fb_req = urllib.request.Request(fb_url, data=payload, headers=headers, method="POST")
+                            res = urllib.request.urlopen(fb_req, timeout=12.0)
+                        else:
+                            raise
+                    raw_pcm = res.read()
+                    if raw_pcm:
+                        if is_fallback:
+                            self._test_status_sig.emit("Playing Bella (Free Soft Voice — RDWds... needs Paid Plan)", True)
+                        else:
+                            self._test_status_sig.emit(f"Playing custom voice ({vid[:8]}…)", True)
+                        arr = np.frombuffer(raw_pcm, dtype=np.int16)
+                        sd.play(arr, 24000)
+                        sd.wait()
+                else:
+                    import asyncio
+                    from google import genai
+                    from google.genai import types
+                    from memory.config_manager import load_api_keys
+                    gemini_key = load_api_keys().get("gemini_api_key", "")
+                    client = genai.Client(api_key=gemini_key, http_options={"api_version": "v1alpha"})
+                    live_cfg = types.LiveConnectConfig(
+                        response_modalities=["AUDIO"],
+                        speech_config=types.SpeechConfig(
+                            voice_config=types.VoiceConfig(
+                                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
+                            )
+                        )
+                    )
+                    async def _get_live_audio():
+                        async with client.aio.live.connect(model="models/gemini-3.1-flash-live-preview", config=live_cfg) as s:
+                            await s.send_client_content(
+                                turns=[types.Content(role="user", parts=[types.Part.from_text(text=f"Say: Hello sir, I am {asst_name}. This is my voice.")])],
+                                turn_complete=True
+                            )
+                            chunks = []
+                            async for r in s.receive():
+                                if r.data:
+                                    chunks.append(r.data)
+                                if r.server_content and r.server_content.turn_complete:
+                                    break
+                            return b"".join(chunks)
+
+                    raw_pcm = asyncio.run(_get_live_audio())
+                    if raw_pcm:
+                        self._test_status_sig.emit(f"Playing {voice} audio…", True)
+                        arr = np.frombuffer(raw_pcm, dtype=np.int16)
+                        sd.play(arr, 24000)
+                        sd.wait()
+
+                self._test_status_sig.emit("✓ Test complete", True)
+            except Exception as e:
+                err_msg = str(e)[:35]
+                self._test_status_sig.emit(f"✕ {err_msg}", False)
+
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_test_status(self, text: str, is_ok: bool):
+        self._test_voice_btn.setEnabled(True)
+        color = C.GREEN if is_ok else C.ACC
+        self._test_voice_status.setStyleSheet(f"color: {color}; background: transparent;")
+        self._test_voice_status.setText(text)
 
     # ── colour flow ──────────────────────────────────────────────────────────
     def _set_color(self, hx: str, update_wheel: bool = True, preview: bool = True):
@@ -2148,6 +2678,25 @@ class CustomizeOverlay(QWidget):
     def _save(self):
         name = self._name_input.text().strip() or "JARVIS"
         user = self._user_input.text().strip()
+        persona = self._persona_input.toPlainText().strip() if hasattr(self, "_persona_input") else ""
+        mood = self._mood_input.text().strip() if hasattr(self, "_mood_input") else ""
+        if hasattr(self, "_el_vid_input"):
+            from memory.config_manager import save_elevenlabs_voice_id
+            vid = self._el_vid_input.text().strip()
+            if vid:
+                save_elevenlabs_voice_id(vid)
+        try:
+            from core.assistants_manager import update_or_create_assistant, switch_assistant
+            update_or_create_assistant(
+                name=name,
+                persona=persona,
+                mood=mood,
+                voice=self._sel_voice,
+                ui_color=self._sel_color or DEFAULT_UI_COLOR,
+            )
+            switch_assistant(name)
+        except Exception as e:
+            print(f"[CustomizeOverlay] Save assistant error: {e}")
         self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR, self._sel_voice)
         self.hide()
 
@@ -5332,7 +5881,9 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        root.addWidget(self._build_header())
+        self._header = self._build_header()
+        # root.addWidget(self._header)  # Legacy header commented out for clean unified HUD
+
         # Tab strip under the header: HUD · OVERVIEW · TASKS · BRAIN · MIND. If the workspace
         # module cannot be built for any reason the strip is simply absent and the app is the
         # HUD it always was.
@@ -5343,7 +5894,7 @@ class MainWindow(QMainWindow):
             self._nav = NavBar(C)
             self._workspace = WorkspacePanel(C)
             self._workspace.on_pair = lambda: self._open_phone_link()      # PHONE tab → the QR window
-            root.addWidget(self._nav)
+            # root.addWidget(self._nav)  # Legacy nav bar commented out for clean unified HUD
         except Exception as _e:
             print(f"[UI] workspace tabs unavailable: {type(_e).__name__}: {_e}")
             self._nav = self._workspace = None
@@ -5353,7 +5904,7 @@ class MainWindow(QMainWindow):
         body.setSpacing(0)
 
         self._left_panel = self._build_left_panel()
-        body.addWidget(self._left_panel, stretch=0)
+        # body.addWidget(self._left_panel, stretch=0)  # Legacy left panel commented out
 
         # Center column: HUD + resizable content panel via QSplitter
         self.hud = HudCanvas(face_path, _display)
@@ -5522,10 +6073,29 @@ class MainWindow(QMainWindow):
             _miss.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
             _vid_v.addWidget(_miss, stretch=1)
 
-        # Stack: 0 = animated HUD, 1 = live camera, 2 = video, 3 = inbuilt browser
+        # Stack: 0 = animated HUD (or embedded futuristic HUD dashboard), 1 = live camera, 2 = video, 3 = inbuilt browser
         self._browser_cont = self._build_inbuilt_browser()
         self._hud_cam_stack = QStackedWidget()
-        self._hud_cam_stack.addWidget(self.hud)
+
+        # If QWebEngineView is available and hud_dashboard.html exists, embed it directly into index 0!
+        _hud_dashboard_file = BASE_DIR / "dashboard" / "static" / "hud_dashboard.html"
+        self._hud_bridge = _HudPyBridge(self)
+        if HAVE_WEBENGINE and _hud_dashboard_file.exists():
+            try:
+                self._hud_web = QWebEngineView()
+                self._hud_web.setStyleSheet("background: #030712; border: none;")
+                self._web_channel = QWebChannel(self._hud_web.page())
+                self._web_channel.registerObject("pyBridge", self._hud_bridge)
+                self._hud_web.page().setWebChannel(self._web_channel)
+                self._hud_web.setUrl(QUrl.fromLocalFile(str(_hud_dashboard_file.resolve())))
+                self._hud_cam_stack.addWidget(self._hud_web)
+            except Exception:
+                self._hud_web = None
+                self._hud_cam_stack.addWidget(self.hud)
+        else:
+            self._hud_web = None
+            self._hud_cam_stack.addWidget(self.hud)
+
         self._hud_cam_stack.addWidget(_cam_cont)
         self._hud_cam_stack.addWidget(self._video_cont)
         self._hud_cam_stack.addWidget(self._browser_cont)
@@ -5533,7 +6103,9 @@ class MainWindow(QMainWindow):
             self._hud_cam_stack.addWidget(self._workspace)          # index 4
             self._nav.picked.connect(self._on_nav_pick)
             self._hud_cam_stack.currentChanged.connect(self._sync_nav)
+            self._workspace.closed.connect(lambda: self._on_nav_pick("hud"))
 
+        # Legacy vertical splitter with content/news panel commented out to make new HUD full-screen
         self._center_split = QSplitter(Qt.Orientation.Vertical)
         self._center_split.setStyleSheet(f"""
             QSplitter::handle {{
@@ -5544,19 +6116,19 @@ class MainWindow(QMainWindow):
                 background: {C.PRI_DIM};
             }}
         """)
-        self._center_split.addWidget(self._hud_cam_stack)
-        self._center_split.addWidget(self._content_panel)
-        self._center_split.addWidget(self._quiz_panel)
-        self._center_split.setStretchFactor(0, 3)
-        self._center_split.setStretchFactor(1, 1)
-        self._center_split.setCollapsible(0, False)
-        body.addWidget(self._center_split, stretch=5)
+        # Kept in memory so show_content / show_quiz don't crash:
+        self._content_panel.hide()
+        self._quiz_panel.hide()
+
+        # Full-screen HUD fills the entire workspace:
+        body.addWidget(self._hud_cam_stack, stretch=1)
 
         self._right_panel = self._build_right_panel()
-        body.addWidget(self._right_panel, stretch=0)
+        # body.addWidget(self._right_panel, stretch=0)  # Legacy right panel commented out
 
         root.addLayout(body, stretch=1)
-        root.addWidget(self._build_footer())
+        self._footer = self._build_footer()
+        # root.addWidget(self._footer)  # Legacy footer commented out for edge-to-edge futuristic look
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
         self._quick_drawer = self._build_quick_drawer()
@@ -5578,6 +6150,8 @@ class MainWindow(QMainWindow):
         self._update_metrics()
 
         self._log_sig.connect(self._log.append_log)
+        if hasattr(self, "_hud_bridge"):
+            self._log_sig.connect(self._hud_bridge.onLogMessage.emit)
         self._state_sig.connect(self._apply_state)
         self._content_sig.connect(self._show_content)
         self._codejob_sig.connect(self._show_code_job)
@@ -6720,6 +7294,15 @@ class MainWindow(QMainWindow):
         else:
             self._bar_tmp.set_value(0, "N/A")
 
+        if hasattr(self, "_hud_bridge") and self._hud_bridge:
+            try:
+                proc_count = len(psutil.pids()) if hasattr(psutil, "pids") else 244
+                self._hud_bridge.onMetricsUpdate.emit(
+                    float(cpu), float(mem), float(gpu), float(tmp), net_str, int(proc_count)
+                )
+            except Exception:
+                pass
+
         try:
             boot_t  = psutil.boot_time()
             elapsed = time.time() - boot_t
@@ -6889,6 +7472,11 @@ class MainWindow(QMainWindow):
         try:
             if key == "hud":
                 self._hud_cam_stack.setCurrentIndex(0)
+                if hasattr(self, "_hud_web") and self._hud_web is not None:
+                    try:
+                        self._hud_web.page().runJavaScript("if (typeof switchTab === 'function') switchTab('hud');")
+                    except Exception:
+                        pass
             else:
                 self._hud_cam_stack.setCurrentIndex(self._WORKSPACE_INDEX)
                 self._workspace.show_page(key)
@@ -7123,6 +7711,7 @@ class MainWindow(QMainWindow):
 
         self._BTN_PRI, self._BTN_DIM = _BTN_STYLE_PRI, _BTN_STYLE_DIM
         w = QWidget(self.centralWidget())
+        w.setWindowFlags(Qt.WindowType.SubWindow | Qt.WindowType.FramelessWindowHint)
         w.setObjectName("QuickDrawer")
         w.setStyleSheet(f"""
             QWidget#QuickDrawer {{
@@ -7267,6 +7856,7 @@ class MainWindow(QMainWindow):
     def _build_controls_drawer(self) -> QWidget:
         """The switches that get flicked every day, in their own panel."""
         w = QWidget(self.centralWidget())
+        w.setWindowFlags(Qt.WindowType.SubWindow | Qt.WindowType.FramelessWindowHint)
         w.setObjectName("QuickDrawer")
         w.setStyleSheet(self._quick_drawer.styleSheet())
         w.hide()
@@ -7365,6 +7955,14 @@ class MainWindow(QMainWindow):
             self._position_quick_drawer()
             self._quick_drawer.show()
             self._quick_drawer.raise_()
+            try:
+                if hasattr(self, "web_view") and self.web_view:
+                    self.web_view.page().runJavaScript(
+                        "const s=document.getElementById('cyber-settings-drawer');if(s)s.style.display='none';"
+                        "const c=document.getElementById('cyber-controls-drawer');if(c)c.style.display='none';"
+                    )
+            except Exception:
+                pass
         else:
             self._quick_drawer.hide()
 
@@ -7377,6 +7975,14 @@ class MainWindow(QMainWindow):
             self._position_ctrl_drawer()
             self._ctrl_drawer.show()
             self._ctrl_drawer.raise_()
+            try:
+                if hasattr(self, "web_view") and self.web_view:
+                    self.web_view.page().runJavaScript(
+                        "const s=document.getElementById('cyber-settings-drawer');if(s)s.style.display='none';"
+                        "const c=document.getElementById('cyber-controls-drawer');if(c)c.style.display='none';"
+                    )
+            except Exception:
+                pass
         else:
             self._ctrl_drawer.hide()
 
@@ -7393,25 +7999,18 @@ class MainWindow(QMainWindow):
             self._ctrl_btn.setChecked(False)
 
     def _place_drawer(self, drawer, left: int):
-        _W = 220
+        _W = 230
         drawer.setFixedWidth(_W)
         drawer.adjustSize()
-        drawer.setGeometry(left, 54, _W, drawer.sizeHint().height())
+        drawer.setGeometry(left, 48, _W, drawer.sizeHint().height())
 
     def _position_quick_drawer(self):
         if hasattr(self, "_quick_drawer"):
-            self._place_drawer(self._quick_drawer, 12)
+            self._place_drawer(self._quick_drawer, 160)
 
     def _position_ctrl_drawer(self):
-        # Under its own header button rather than under the other one's.
         if hasattr(self, "_ctrl_drawer"):
-            left = 12
-            try:
-                left = max(12, self._ctrl_btn.mapTo(self.centralWidget(),
-                                                    QPoint(0, 0)).x() - 8)
-            except Exception:
-                pass
-            self._place_drawer(self._ctrl_drawer, left)
+            self._place_drawer(self._ctrl_drawer, 205)
 
     def _build_input_row(self) -> QHBoxLayout:
         row = QHBoxLayout(); row.setSpacing(5)
@@ -7548,11 +8147,12 @@ class MainWindow(QMainWindow):
         self._content_display.moveCursor(
             self._content_display.textCursor().MoveOperation.Start
         )
-        first_show = not self._content_panel.isVisible()
-        self._content_panel.show()
-        if first_show:
-            total = self._center_split.height()
-            self._center_split.setSizes([max(total - 220, 120), 220])
+        if hasattr(self, "_hud_bridge") and self._hud_bridge:
+            try:
+                self._hud_bridge.onLogMessage.emit(f"◈ {title.upper()}: {text[:180]}…")
+                self._hud_bridge.onContentReceived.emit(title, text)
+            except Exception:
+                pass
 
     # ── the coding agent, live ───────────────────────────────────────────────
     # The panel under the head shows a folder job while it runs: what was asked,
@@ -9015,6 +9615,12 @@ class MainWindow(QMainWindow):
             data["user_name"] = user_name.strip()
             if ui_color:
                 data["ui_color"] = ui_color.strip().lower()
+            if voice:
+                data["voice_name"] = voice
+                if voice == "ElevenLabs":
+                    data["tts_engine"] = "elevenlabs"
+                else:
+                    data["tts_engine"] = "gemini"
             API_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
             self._log.append_log(f"SYS: Identity updated — {display}")
             if color_changed:
@@ -9023,6 +9629,33 @@ class MainWindow(QMainWindow):
                 self._log.append_log(f"SYS: Voice set — {voice}")
         except Exception as e:
             self._log.append_log(f"ERR: Config save failed — {e}")
+
+        # Update Web HUD dynamically
+        if hasattr(self, "_hud_web") and self._hud_web is not None:
+            try:
+                js = f"""
+                (function() {{
+                    var brand = document.querySelector('.hud-brand');
+                    if (brand) brand.innerHTML = {json.dumps(display)} + ' <small>MARK LVI</small>';
+                    var core = document.querySelector('.core-title');
+                    if (core) core.textContent = {json.dumps(display)};
+                }})();
+                """
+                self._hud_web.page().runJavaScript(js)
+            except Exception:
+                pass
+
+        if hasattr(self, "_hud_bridge") and self._hud_bridge is not None:
+            try:
+                self._hud_bridge.onIdentityUpdated.emit(display)
+            except Exception:
+                pass
+
+        if hasattr(self, "on_ai_settings_changed") and callable(self.on_ai_settings_changed):
+            try:
+                self.on_ai_settings_changed("identity")
+            except Exception as _e:
+                print(f"[UI] on_ai_settings_changed error: {_e}")
 
         if voice_changed and self.on_voice_change:
             self.on_voice_change()
@@ -9227,6 +9860,11 @@ class MainWindow(QMainWindow):
         self._muted = muted
         self.hud.muted = muted
         self._style_mute_btn()
+        if hasattr(self, "_hud_bridge") and self._hud_bridge:
+            try:
+                self._hud_bridge.onMicStateChanged.emit(self._muted)
+            except Exception:
+                pass
         if muted:
             self._apply_state("MUTED")
             self._log.append_log("SYS: Microphone muted." + (f" {note}" if note else ""))
@@ -9264,6 +9902,11 @@ class MainWindow(QMainWindow):
     def _apply_state(self, state: str):
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
+        if hasattr(self, "_hud_bridge") and self._hud_bridge:
+            try:
+                self._hud_bridge.onStateChanged.emit(str(state))
+            except Exception:
+                pass
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False

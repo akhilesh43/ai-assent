@@ -255,11 +255,15 @@ def _scroll(pal, inner: QWidget) -> QScrollArea:
     s = QScrollArea()
     s.setWidgetResizable(True)
     s.setFrameShape(QFrame.Shape.NoFrame)
+    s.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    s.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     s.setStyleSheet(
         f"QScrollArea {{ background: transparent; border: none; }}"
-        f"QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}"
-        f"QScrollBar::handle:vertical {{ background: {pal.BORDER_B}; border-radius: 4px; min-height: 24px; }}"
-        f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}")
+        f"QScrollBar:vertical {{ background: rgba(0, 0, 0, 0.25); width: 8px; margin: 0px; border-radius: 4px; }}"
+        f"QScrollBar::handle:vertical {{ background: {pal.BORDER}; border-radius: 4px; min-height: 24px; }}"
+        f"QScrollBar::handle:vertical:hover {{ background: {pal.PRI}; }}"
+        f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}"
+        f"QScrollBar:horizontal {{ height: 0px; }}")
     inner.setStyleSheet("background: transparent;")
     s.setWidget(inner)
     return s
@@ -848,7 +852,8 @@ class MindPage(_Page):
 
 
 class PhonePage(_Page):
-    """The paired phone: status, quick actions, replies waiting for approval, notifications, teaching."""
+    """The paired phone: status, quick actions, remote app launcher, direct dispatcher,
+    smart auto-reply brain, notifications & teaching."""
 
     def __init__(self, pal, parent=None):
         super().__init__(parent)
@@ -857,17 +862,45 @@ class PhonePage(_Page):
         from core.phone_bridge import get_bridge
         self._bridge = get_bridge
         self._sig = None
+
         body = QWidget()
         root = QVBoxLayout(body)
-        root.setContentsMargins(18, 14, 18, 14)
-        root.setSpacing(12)
+        root.setContentsMargins(14, 8, 14, 8)
+        root.setSpacing(8)
 
+        # ── 1. HERO DEVICE IDENTITY & CONNECTION STATUS RIBBON ──
+        hero_panel = _panel(pal)
+        hp_lay = QHBoxLayout(hero_panel)
+        hp_lay.setContentsMargins(14, 8, 14, 8)
+
+        dev_info = QVBoxLayout()
+        self.dev_title = QLabel("📱  COMPANION PHONE LINK // MARK LVI")
+        self.dev_title.setFont(QFont(FONT, 10, QFont.Weight.Bold))
+        self.dev_title.setStyleSheet(f"color: {pal.PRI}; letter-spacing: 1px;")
+
+        self.dev_sub = QLabel("Scanning companion device telemetry…")
+        self.dev_sub.setFont(QFont(MONO, 8))
+        self.dev_sub.setStyleSheet(f"color: {pal.TEXT_DIM};")
+        dev_info.addWidget(self.dev_title)
+        dev_info.addWidget(self.dev_sub)
+        hp_lay.addLayout(dev_info, 1)
+
+        self.st_badge = QLabel("● CONNECTING")
+        self.st_badge.setFont(QFont(MONO, 9, QFont.Weight.Bold))
+        self.st_badge.setStyleSheet(
+            f"background: rgba(0, 255, 170, 0.12); color: {pal.GREEN}; border: 1px solid {pal.GREEN}; "
+            f"border-radius: 6px; padding: 5px 12px;"
+        )
+        hp_lay.addWidget(self.st_badge)
+        root.addWidget(hero_panel)
+
+        # ── 2. FOUR HIGH-TECH TELEMETRY CARDS ──
         cards = QHBoxLayout()
-        cards.setSpacing(10)
-        self.c_conn = Card(pal, "PHONE", "GREEN")
-        self.c_batt = Card(pal, "BATTERY", "ACC2")
-        self.c_call = Card(pal, "CALL", "ACC")
-        self.c_learn = Card(pal, "LEARNED REPLIES", "PRI")
+        cards.setSpacing(8)
+        self.c_conn = Card(pal, "PHONE STATUS", "GREEN")
+        self.c_batt = Card(pal, "BATTERY & CHARGE", "ACC2")
+        self.c_call = Card(pal, "CALL RADAR", "ACC")
+        self.c_learn = Card(pal, "AUTO-REPLY AI", "PRI")
         for c in (self.c_conn, self.c_batt, self.c_call, self.c_learn):
             cards.addWidget(c)
         root.addLayout(cards)
@@ -875,28 +908,146 @@ class PhonePage(_Page):
         def btn(text, cb, accent="PRI"):
             b = QPushButton(text)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setFont(QFont(FONT, 9, QFont.Weight.DemiBold))
+            b.setFont(QFont(FONT, 8, QFont.Weight.DemiBold))
             b.setStyleSheet(
-                f"QPushButton {{ background: {pal.PANEL}; color: {getattr(pal, accent)}; border: 1px solid {pal.BORDER_B}; "
-                f"border-radius: 8px; padding: 7px 14px; }}"
-                f"QPushButton:hover {{ background: {pal.PRI_GHO}; color: {pal.WHITE}; }}")
+                f"QPushButton {{ background: {pal.PANEL}; color: {getattr(pal, accent, pal.PRI)}; "
+                f"border: 1px solid {pal.BORDER_B}; border-radius: 6px; padding: 6px 12px; }}"
+                f"QPushButton:hover {{ background: {pal.PRI_GHO}; color: {pal.WHITE}; border-color: {pal.PRI}; }}"
+            )
             b.clicked.connect(_safe(lambda _c=False: cb()))
             return b
 
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        row.addWidget(btn("📷  Pair phone (QR)", lambda: self.on_pair and self.on_pair(), "GREEN"))
-        row.addWidget(btn("✆  Answer", lambda: self._do("answer_call"), "GREEN"))
-        row.addWidget(btn("✖  End / decline", lambda: self._do("end_call"), "RED"))
-        row.addWidget(btn("🔔  Find phone", lambda: self._do("find_phone"), "ACC2"))
-        row.addWidget(btn("🔕  Stop", lambda: self._do("stop_find_phone"), "TEXT_MED"))
-        row.addWidget(btn("🔦  Torch on", lambda: self._do("flashlight", {"on": True}), "ACC2"))
-        row.addWidget(btn("Off", lambda: self._do("flashlight", {"on": False}), "TEXT_MED"))
-        row.addStretch()
-        root.addLayout(row)
+        # ── 3. HARDWARE CONTROL TOOLBAR ──
+        ctrl_panel = _panel(pal)
+        cp_lay = QVBoxLayout(ctrl_panel)
+        cp_lay.setContentsMargins(14, 8, 14, 8)
+        cp_lay.setSpacing(8)
+        cp_lay.addWidget(_section_label(pal, "DEVICE CONTROLS & SECURITY"))
 
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        row.addWidget(btn("📷  Pair Phone (QR)", lambda: self.on_pair and self.on_pair(), "GREEN"))
+        row.addWidget(btn("✆  Answer Call", lambda: self._do("answer_call"), "GREEN"))
+        row.addWidget(btn("✖  End Call", lambda: self._do("end_call"), "RED"))
+        row.addWidget(btn("🔔  Find Phone (Alarm)", lambda: self._do("find_phone"), "ACC2"))
+        row.addWidget(btn("🔕  Stop Alarm", lambda: self._do("stop_find_phone"), "TEXT_MED"))
+        row.addWidget(btn("🔦  Torch On", lambda: self._do("flashlight", {"on": True}), "ACC2"))
+        row.addWidget(btn("Torch Off", lambda: self._do("flashlight", {"on": False}), "TEXT_MED"))
+        row.addWidget(btn("🔊  Max Ringer", lambda: self._do("volume", {"stream": "ring", "level": 100}), "PRI"))
+        row.addStretch()
+        cp_lay.addLayout(row)
+
+        # Quick Phone Call Direct Line
+        dial_row = QHBoxLayout()
+        dial_row.setSpacing(6)
+        self.quick_dial_input = QLineEdit()
+        self.quick_dial_input.setPlaceholderText("📞 Enter Phone Number to Call directly (e.g. 9876543210 / +91...)")
+        self.quick_dial_input.setFixedHeight(28)
+        self.quick_dial_input.setStyleSheet(
+            f"QLineEdit {{ background: {pal.PANEL2}; color: {pal.TEXT}; border: 1px solid {pal.BORDER}; "
+            f"border-radius: 6px; padding: 4px 10px; font-family: '{MONO}'; font-size: 11px; }} "
+            f"QLineEdit:focus {{ border-color: {pal.GREEN}; }}"
+        )
+        self.quick_dial_input.returnPressed.connect(_safe(self._quick_call))
+
+        call_btn = QPushButton("📞  CALL PHONE NOW")
+        call_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        call_btn.setFont(QFont(FONT, 8, QFont.Weight.Bold))
+        call_btn.setFixedHeight(28)
+        call_btn.setStyleSheet(
+            f"QPushButton {{ background: {pal.GREEN}; color: {pal.DARK}; border: none; border-radius: 6px; padding: 4px 16px; }}"
+            f"QPushButton:hover {{ background: {pal.WHITE}; }}"
+        )
+        call_btn.clicked.connect(_safe(lambda _c=False: self._quick_call()))
+        dial_row.addWidget(self.quick_dial_input, 1)
+        dial_row.addWidget(call_btn)
+        cp_lay.addLayout(dial_row)
+
+        root.addWidget(ctrl_panel)
+
+        # ── 4. REMOTE APP LAUNCHER (NEW FEATURE) ──
+        apps_panel = _panel(pal)
+        ap_lay = QVBoxLayout(apps_panel)
+        ap_lay.setContentsMargins(14, 8, 14, 8)
+        ap_lay.addWidget(_section_label(pal, "REMOTE APP LAUNCHER (TAP TO OPEN ON PHONE)"))
+
+        app_row = QHBoxLayout()
+        app_row.setSpacing(6)
+        app_row.addWidget(btn("💬  WhatsApp", lambda: self._do("open_app", {"package": "com.whatsapp", "app": "com.whatsapp"}), "GREEN"))
+        app_row.addWidget(btn("📷  Camera", lambda: self._do("open_app", {"package": "com.android.camera", "app": "com.android.camera"}), "PRI"))
+        app_row.addWidget(btn("🗺️  Maps", lambda: self._do("open_app", {"package": "com.google.android.apps.maps", "app": "com.google.android.apps.maps"}), "ACC2"))
+        app_row.addWidget(btn("🎵  Spotify", lambda: self._do("open_app", {"package": "com.spotify.music", "app": "com.spotify.music"}), "GREEN"))
+        app_row.addWidget(btn("🌐  Chrome", lambda: self._do("open_app", {"package": "com.android.chrome", "app": "com.android.chrome"}), "PRI"))
+        app_row.addWidget(btn("⚙️  Settings", lambda: self._do("open_app", {"package": "com.android.settings", "app": "com.android.settings"}), "TEXT_MED"))
+        app_row.addStretch()
+        ap_lay.addLayout(app_row)
+        root.addWidget(apps_panel)
+
+        # ── 5. DIRECT DIRECTIVE DISPATCHER (NEW FEATURE) ──
+        disp_panel = _panel(pal)
+        dp_lay = QVBoxLayout(disp_panel)
+        dp_lay.setContentsMargins(14, 10, 14, 10)
+        dp_lay.addWidget(_section_label(pal, "DIRECT DISPATCHER // TRANSMIT TO COMPANION PHONE"))
+
+        disp_row = QHBoxLayout()
+        disp_row.setSpacing(8)
+
+        field_style = (
+            f"QLineEdit {{ background: {pal.PANEL2}; color: {pal.TEXT}; border: 1px solid {pal.BORDER}; "
+            f"border-radius: 6px; padding: 6px 10px; font-family: '{MONO}'; font-size: 11px; }} "
+            f"QLineEdit:focus {{ border-color: {pal.PRI}; }}"
+        )
+
+        self.disp_action = QComboBox()
+        self.disp_action.addItems([
+            "💬 Send Direct SMS",
+            "🔔 Push Phone Toast / Alert",
+            "🌐 Open Link on Phone",
+            "📞 Dial Phone Call"
+        ])
+        self.disp_action.setFixedHeight(28)
+        self.disp_action.setStyleSheet(
+            f"QComboBox {{ background: {pal.PANEL2}; color: {pal.TEXT}; border: 1px solid {pal.BORDER}; "
+            f"border-radius: 6px; padding: 4px 10px; font-family: '{FONT}'; font-size: 11px; }}"
+        )
+
+        self.disp_target = QLineEdit()
+        self.disp_target.setPlaceholderText("Number / Contact (e.g. +919876543210)")
+        self.disp_target.setFixedWidth(210)
+        self.disp_target.setFixedHeight(28)
+        self.disp_target.setStyleSheet(field_style)
+
+        self.disp_msg = QLineEdit()
+        self.disp_msg.setPlaceholderText("Message content or URL to transmit… (Press Enter)")
+        self.disp_msg.setFixedHeight(28)
+        self.disp_msg.setStyleSheet(field_style)
+        self.disp_msg.returnPressed.connect(_safe(self._submit_dispatch))
+
+        disp_btn = QPushButton("⚡  TRANSMIT ↵")
+        disp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        disp_btn.setFont(QFont(FONT, 8, QFont.Weight.Bold))
+        disp_btn.setFixedHeight(28)
+        disp_btn.setStyleSheet(
+            f"QPushButton {{ background: {pal.PRI}; color: {pal.DARK}; border: none; border-radius: 6px; padding: 5px 14px; }}"
+            f"QPushButton:hover {{ background: {pal.WHITE}; }}"
+        )
+        disp_btn.clicked.connect(_safe(lambda _c=False: self._submit_dispatch()))
+
+        disp_row.addWidget(self.disp_action)
+        disp_row.addWidget(self.disp_target)
+        disp_row.addWidget(self.disp_msg, 1)
+        disp_row.addWidget(disp_btn)
+        dp_lay.addLayout(disp_row)
+
+        self.disp_status = QLabel("")
+        self.disp_status.setFont(QFont(MONO, 8))
+        self.disp_status.setStyleSheet(f"color: {pal.GREEN}; margin-top: 2px;")
+        dp_lay.addWidget(self.disp_status)
+        root.addWidget(disp_panel)
+
+        # ── 6. AUTO-REPLY MODE SETTING ──
         mode = QHBoxLayout()
-        lab = QLabel("AUTO-REPLY to messages:")
+        lab = QLabel("AUTO-REPLY ENGINE:")
         lab.setFont(QFont(FONT, 9, QFont.Weight.Bold))
         lab.setStyleSheet(f"color: {pal.TEXT_MED};")
         self.mode = QComboBox()
@@ -906,11 +1057,11 @@ class PhonePage(_Page):
             f"QComboBox {{ background: {pal.PANEL}; color: {pal.TEXT}; border: 1px solid {pal.BORDER}; "
             f"border-radius: 7px; padding: 5px 10px; }}"
             f"QComboBox QAbstractItemView {{ background: {pal.PANEL}; color: {pal.TEXT}; "
-            f"selection-background-color: {pal.PRI_GHO}; }}")
+            f"selection-background-color: {pal.PRI_GHO}; }}"
+        )
         self._mode_busy = False
         self.mode.currentTextChanged.connect(_safe(self._set_mode))
-        hint = QLabel("ask = draft in your style, you approve with one tap · auto = answer on its own "
-                      "(never groups, money, or anything private)")
+        hint = QLabel("ask = AI drafts reply in your exact tone, you approve · auto = autonomous replies (never sends private/money info)")
         hint.setFont(QFont(FONT, 8))
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {pal.TEXT_DIM};")
@@ -919,26 +1070,29 @@ class PhonePage(_Page):
         mode.addWidget(hint, 1)
         root.addLayout(mode)
 
-        root.addWidget(_section_label(pal, "WAITING FOR YOUR OK"))
+        # ── 7. PENDING APPROVAL REPLIES ──
+        root.addWidget(_section_label(pal, "AI DRAFTS WAITING FOR APPROVAL"))
         self.pend_box = QVBoxLayout()
         self.pend_box.setSpacing(8)
         root.addLayout(self.pend_box)
 
-        root.addWidget(_section_label(pal, "PHONE NOTIFICATIONS"))
+        # ── 8. LIVE PHONE NOTIFICATIONS ──
+        root.addWidget(_section_label(pal, "LIVE PHONE NOTIFICATIONS FEED"))
         self.note_box = QVBoxLayout()
         self.note_box.setSpacing(4)
         root.addLayout(self.note_box)
 
+        # ── 9. TEACH AI REPLY PERSONA ──
         teach = _panel(pal)
         tv = QVBoxLayout(teach)
         tv.setContentsMargins(14, 10, 14, 12)
-        tv.addWidget(_section_label(pal, "TEACH IT HOW YOU REPLY"))
+        tv.addWidget(_section_label(pal, "TEACH JARVIS YOUR REPLY VOICE"))
         r = QHBoxLayout()
         field = (f"QLineEdit {{ background: {pal.PANEL2}; color: {pal.TEXT}; border: 1px solid {pal.BORDER}; "
                  f"border-radius: 7px; padding: 6px 10px; }} QLineEdit:focus {{ border-color: {pal.PRI}; }}")
-        self.t_who = QLineEdit(); self.t_who.setPlaceholderText("who (optional)"); self.t_who.setFixedWidth(130)
-        self.t_in = QLineEdit(); self.t_in.setPlaceholderText("they say…")
-        self.t_out = QLineEdit(); self.t_out.setPlaceholderText("you reply…  (Enter)")
+        self.t_who = QLineEdit(); self.t_who.setPlaceholderText("Contact (optional)"); self.t_who.setFixedWidth(140)
+        self.t_in = QLineEdit(); self.t_in.setPlaceholderText("Incoming text they say…")
+        self.t_out = QLineEdit(); self.t_out.setPlaceholderText("How you reply… (Enter)")
         for w in (self.t_who, self.t_in, self.t_out):
             w.setStyleSheet(field); w.setFont(QFont(FONT, 9))
         self.t_out.returnPressed.connect(_safe(self._teach))
@@ -951,7 +1105,8 @@ class PhonePage(_Page):
         tv.addWidget(self.t_msg)
         root.addWidget(teach)
 
-        root.addWidget(_section_label(pal, "ACTIVITY"))
+        # ── 10. REAL-TIME ACTIVITY & TELEMETRY LOG ──
+        root.addWidget(_section_label(pal, "COMPANION LINK EVENT LOG"))
         self.log = QLabel("")
         self.log.setWordWrap(True)
         self.log.setFont(QFont(MONO, 8))
@@ -963,10 +1118,66 @@ class PhonePage(_Page):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(_scroll(pal, body))
 
+    def _quick_call(self) -> None:
+        num = self.quick_dial_input.text().strip()
+        if not num:
+            if hasattr(self, "disp_status"):
+                self.disp_status.setText("⚠ Please enter a phone number to call.")
+                self.disp_status.setStyleSheet(f"color: {self._pal.ACC2};")
+            return
+        self._do("place_call", {"number": num, "phone": num, "name": num})
+        if hasattr(self, "disp_status"):
+            self.disp_status.setText(f"✓ Outgoing call initiated to {num} on phone")
+            self.disp_status.setStyleSheet(f"color: {self._pal.GREEN};")
+
+    def _submit_dispatch(self) -> None:
+        idx = self.disp_action.currentIndex()
+        tgt = self.disp_target.text().strip()
+        msg = self.disp_msg.text().strip()
+        if not msg and idx != 3:
+            self.disp_status.setText("⚠ Please enter text/URL to transmit.")
+            self.disp_status.setStyleSheet(f"color: {self._pal.ACC2};")
+            return
+
+        if idx == 0:  # Send SMS
+            if not tgt:
+                self.disp_status.setText("⚠ Please specify phone number for SMS.")
+                self.disp_status.setStyleSheet(f"color: {self._pal.ACC2};")
+                return
+            self._do("send_sms", {"number": tgt, "phone": tgt, "text": msg, "message": msg})
+            self.disp_status.setText(f"✓ SMS transmitted to {tgt}: \"{msg[:30]}\"")
+        elif idx == 1:  # Phone Toast
+            self._do("toast", {"text": msg})
+            self.disp_status.setText(f"✓ Toast alert pushed to phone: \"{msg[:35]}\"")
+        elif idx == 2:  # Open Link
+            url = msg if "://" in msg else f"https://{msg}"
+            self._do("open_url", {"url": url})
+            self.disp_status.setText(f"✓ URL launched on companion phone: {url}")
+        elif idx == 3:  # Dial Call
+            call_tgt = tgt or msg
+            if not call_tgt:
+                self.disp_status.setText("⚠ Please specify phone number or contact to call.")
+                self.disp_status.setStyleSheet(f"color: {self._pal.ACC2};")
+                return
+            self._do("place_call", {"number": call_tgt, "phone": call_tgt, "name": call_tgt})
+            self.disp_status.setText(f"✓ Outgoing call initiated to {call_tgt}")
+
+        self.disp_status.setStyleSheet(f"color: {self._pal.GREEN};")
+        self.disp_msg.clear()
+
     # commands wait for the phone, so never on the Qt thread
     def _do(self, action: str, args: Optional[dict] = None) -> None:
-        threading.Thread(target=lambda: self._bridge().send_command(action, args or {}),
-                         daemon=True, name="PhoneCmd").start()
+        def run():
+            res = self._bridge().send_command(action, args or {})
+            ok = bool(res.get("ok"))
+            err = str(res.get("error") or "")
+            if hasattr(self, "disp_status"):
+                txt = f"✓ {action}: Transmitted successfully" if ok else f"⚠ {action}: {err or 'Failed'}"
+                col = self._pal.GREEN if ok else self._pal.RED
+                self.disp_status.setText(txt)
+                self.disp_status.setStyleSheet(f"color: {col}; margin-top: 2px;")
+            self.apply({})
+        threading.Thread(target=run, daemon=True, name="PhoneCmd").start()
 
     def _set_mode(self, mode: str) -> None:
         if not self._mode_busy:
@@ -1000,20 +1211,54 @@ class PhonePage(_Page):
     def apply(self, snap: dict) -> None:
         P = self._pal
         s = self._bridge().snapshot()
-        self.c_conn.set("Connected" if s["connected"] else "Not connected",
-                        s["device"] or "press “Pair phone (QR)”")
-        self.c_batt.set("—" if s["battery"] is None else f"{s['battery']}%", "charging" if s["charging"] else "")
-        c = s["call"]
-        self.c_call.set(c.get("state", "idle").title(), c.get("who", "") if c.get("state") == "ringing" else "")
+        conn = bool(s.get("connected"))
+        paired = bool(s.get("paired"))
+        dev_name = s.get("device") or ("Companion Phone" if (conn or paired) else "No Device Paired")
+        batt = s.get("battery")
+        chg = s.get("charging")
+
+        if conn:
+            self.st_badge.setText("● ONLINE // SYNCED")
+            self.st_badge.setStyleSheet(
+                f"background: rgba(0, 255, 170, 0.15); color: {P.GREEN}; border: 1px solid {P.GREEN}; "
+                f"border-radius: 6px; padding: 5px 12px;"
+            )
+            self.dev_sub.setText(f"Device: {dev_name}  ·  Link: Encrypted SSE (Online)  ·  Battery: {batt or 'N/A'}% {'⚡ Fast Charging' if chg else ''}")
+        elif paired:
+            self.st_badge.setText("● PAIRED // STANDBY")
+            self.st_badge.setStyleSheet(
+                f"background: rgba(0, 243, 255, 0.15); color: {P.PRI}; border: 1px solid {P.PRI}; "
+                f"border-radius: 6px; padding: 5px 12px;"
+            )
+            self.dev_sub.setText(f"Device: {dev_name}  ·  Status: Paired & Ready  ·  Commands queue automatically and sync to phone")
+        else:
+            self.st_badge.setText("○ DISCONNECTED")
+            self.st_badge.setStyleSheet(
+                f"background: rgba(255, 51, 102, 0.15); color: {P.RED}; border: 1px solid {P.RED}; "
+                f"border-radius: 6px; padding: 5px 12px;"
+            )
+            self.dev_sub.setText("No active companion phone connected. Tap 'Pair Phone (QR)' to connect.")
+
+        st_title = "Connected" if conn else ("Paired (Standby)" if paired else "Not connected")
+        self.c_conn.set(st_title, dev_name)
+        batt_str = "—" if batt is None else f"{batt}%"
+        self.c_batt.set(batt_str, "⚡ Fast Charging" if chg else ("Normal" if batt else "Disconnected"))
+        c = s.get("call", {})
+        self.c_call.set(c.get("state", "idle").title(), c.get("who", "") if c.get("state") == "ringing" else "No active call")
         self.c_learn.set(str(s["learning"]["examples"]), f"{s['learning']['contacts']} contacts · mode {s['mode']}")
         self._mode_busy = True
         self.mode.setCurrentText(s["mode"])
         self._mode_busy = False
-        self.log.setText("\n".join(x["text"] for x in s["log"][:8]) or "Nothing yet.")
+        log_lines = []
+        import time as _t
+        for x in s["log"][:14]:
+            ts = _t.strftime("%H:%M:%S", _t.localtime(x["t"])) if "t" in x else "--:--:--"
+            log_lines.append(f"[{ts}]  {x['text']}")
+        self.log.setText("\n".join(log_lines) or "SYS: Telemetry standby. No recent phone events.")
 
         sig = (tuple(p["id"] for p in s["pending"]), tuple(n["key"] + n["text"] for n in s["notifications"][:8]))
         if sig == self._sig:
-            return                                   # don't rebuild (and wipe a half-typed reply)
+            return
         self._sig = sig
         _clear(self.pend_box)
         for p in s["pending"][:6]:
@@ -1046,13 +1291,13 @@ class PhonePage(_Page):
             v.addLayout(r)
             self.pend_box.addWidget(f)
         if not s["pending"]:
-            q = QLabel("Nothing waiting.")
-            q.setStyleSheet(f"color: {P.TEXT_DIM};")
+            q = QLabel("No drafts waiting for confirmation.")
+            q.setStyleSheet(f"color: {P.TEXT_DIM}; font-family: '{MONO}'; font-size: 11px;")
             self.pend_box.addWidget(q)
         _clear(self.note_box)
         for n in s["notifications"][:8]:
             row = QHBoxLayout()
-            t = QLabel(f"{n['app'] or n['package']}  ·  {n['sender'] or n['title']}:  {n['text'][:90]}")
+            t = QLabel(f"[{n['app'] or n['package']}]  {n['sender'] or n['title']}:  {n['text'][:90]}")
             t.setStyleSheet(f"color: {P.TEXT_MED};")
             t.setFont(QFont(FONT, 9))
             row.addWidget(t, 1)
@@ -1066,8 +1311,8 @@ class PhonePage(_Page):
             w = QWidget(); w.setLayout(row)
             self.note_box.addWidget(w)
         if not s["notifications"]:
-            q = QLabel("No notifications received yet.")
-            q.setStyleSheet(f"color: {P.TEXT_DIM};")
+            q = QLabel("No active phone notifications received.")
+            q.setStyleSheet(f"color: {P.TEXT_DIM}; font-family: '{MONO}'; font-size: 11px;")
             self.note_box.addWidget(q)
 
 
@@ -1091,6 +1336,24 @@ class WorkspacePanel(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+
+        # Sleek top navigation return bar to seamlessly jump back to HUD
+        nav_bar = QWidget()
+        nav_bar.setFixedHeight(42)
+        nav_bar.setStyleSheet(f"background: {palette.PANEL}; border-bottom: 1px solid {palette.BORDER};")
+        n_lay = QHBoxLayout(nav_bar)
+        n_lay.setContentsMargins(14, 0, 14, 0)
+        back_btn = QPushButton("◀  RETURN TO HUD")
+        back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        back_btn.setFont(QFont(FONT, 9, QFont.Weight.Bold))
+        back_btn.setStyleSheet(f"""
+            QPushButton {{ background: {palette.PRI}; color: {palette.DARK}; border: none; border-radius: 6px; padding: 5px 14px; }}
+            QPushButton:hover {{ background: {palette.WHITE}; }}
+        """)
+        back_btn.clicked.connect(_safe(lambda _c=False: self.closed.emit()))
+        n_lay.addWidget(back_btn)
+        n_lay.addStretch()
+        root.addWidget(nav_bar)
 
         self.stack = QStackedWidget()
         self.pages: dict[str, _Page] = {
