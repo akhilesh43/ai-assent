@@ -1680,9 +1680,85 @@
       }
     }
 
+    function getAuthToken() {
+      return sessionStorage.getItem('jarvis_token') || localStorage.getItem('jarvis_token') || 'cloud_session';
+    }
+
+    function authFetch(url, options = {}) {
+      options.headers = options.headers || {};
+      if (!options.headers['Authorization']) {
+        options.headers['Authorization'] = 'Bearer ' + getAuthToken();
+      }
+      return fetch(url, options);
+    }
+
+    let webSocket = null;
+    let logPollSeq = 0;
+    let pollInterval = null;
+
+    function initWebDashboardSocket() {
+      if (qtBridge) return; // Desktop Qt mode active
+
+      const token = getAuthToken();
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+
+      try {
+        webSocket = new WebSocket(wsUrl);
+        webSocket.onopen = () => {
+          console.log('[HUD] Cloud WebSocket connected');
+          if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+        };
+        webSocket.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'log') {
+              const spk = msg.speaker === 'user' ? 'user' : (msg.speaker === 'sys' ? 'sys' : 'jarvis');
+              appendLog(spk, msg.text);
+            } else if (msg.type === 'state') {
+              setAvatarState(msg.state);
+            } else if (msg.type === 'status') {
+              if (msg.state) setAvatarState(msg.state);
+            } else if (msg.type === 'metrics') {
+              applyLiveDials(msg.cpu, msg.mem, msg.gpu, msg.tmp, msg.netStr, msg.procs);
+            }
+          } catch (e) {}
+        };
+        webSocket.onerror = () => {
+          startLogPolling();
+        };
+        webSocket.onclose = () => {
+          setTimeout(initWebDashboardSocket, 5000);
+          startLogPolling();
+        };
+      } catch (err) {
+        startLogPolling();
+      }
+    }
+
+    function startLogPolling() {
+      if (pollInterval || qtBridge) return;
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await authFetch(`/api/log?since=${logPollSeq}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.items && data.items.length) {
+              data.items.forEach(item => {
+                appendLog(item.speaker === 'user' ? 'user' : (item.speaker === 'sys' ? 'sys' : 'jarvis'), item.text);
+              });
+            }
+            if (data.next !== undefined) logPollSeq = data.next;
+            if (data.status) setAvatarState(data.status);
+          }
+        } catch (e) {}
+      }, 2000);
+    }
+
     function initAll() {
       initQtWebBridge();
       initAvatarChromaEngine();
+      setTimeout(initWebDashboardSocket, 500);
     }
 
     if (document.readyState === 'loading') {
@@ -1709,7 +1785,7 @@
       if (qtBridge && qtBridge.switchWorkspaceTab) {
         qtBridge.switchWorkspaceTab(tabKey);
       } else {
-        fetch('/api/command', {
+        authFetch('/api/command', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: `open ${tabKey}` })
@@ -2080,7 +2156,7 @@
       if (qtBridge && qtBridge.saveIdentity) {
         qtBridge.saveIdentity(name, user, voice);
       }
-      fetch('/api/command', {
+      authFetch('/api/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: `voice ${voice}` })
@@ -2091,7 +2167,7 @@
     function testDashboardVoice(voice) {
       const vid = (document.getElementById('drawer-el-vid') ? document.getElementById('drawer-el-vid').value : '') || 'RDWdsTU6N02BFftbIEAp';
       appendLog('sys', `SYS: Testing ${voice} voice (${vid.slice(0, 8)}…)…`);
-      fetch('/api/voice/test', {
+      authFetch('/api/voice/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ voice: voice, text: 'Hello sir! Main aapki personal AI assistant hoon.' })
@@ -2108,7 +2184,7 @@
       const area = document.getElementById('stage-content-area');
       area.innerHTML = '<div style="color: var(--glow-cyan); font-size: 11px;">Loading neural assistant profiles…</div>';
       try {
-        const res = await fetch('/api/assistants');
+        const res = await authFetch('/api/assistants');
         if (res.ok) {
           const data = await res.json();
           if (data && data.assistants && data.assistants.length > 0) {
@@ -2179,7 +2255,7 @@
     async function switchDashboardAssistant(nameOrId) {
       appendLog('sys', `SYS: Switching active neural assistant to ${nameOrId}…`);
       try {
-        const res = await fetch('/api/assistants/switch', {
+        const res = await authFetch('/api/assistants/switch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: nameOrId })
@@ -2284,7 +2360,7 @@
 
       appendLog('sys', `SYS: Deploying new neural assistant [${name}]…`);
       try {
-        const res = await fetch('/api/assistants/create', {
+        const res = await authFetch('/api/assistants/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2419,7 +2495,7 @@
       if (qtBridge && qtBridge.sendCommand) {
         qtBridge.sendCommand(val);
       } else {
-        fetch('/api/command', {
+        authFetch('/api/command', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: val })
@@ -2461,7 +2537,7 @@
       if (qtBridge && qtBridge.triggerInterrupt) {
         qtBridge.triggerInterrupt();
       } else {
-        fetch('/api/command', {
+        authFetch('/api/command', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: 'interrupt' })
