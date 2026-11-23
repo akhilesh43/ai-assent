@@ -4362,6 +4362,21 @@ class JarvisLive:
             await asyncio.sleep(delay)
 
 def main():
+    import os, sys
+    # Detect headless cloud environments (Render, Railway, Heroku, Docker without X11)
+    is_headless = bool(
+        os.environ.get("RENDER") 
+        or os.environ.get("PORT") 
+        or "--headless" in sys.argv 
+        or "--server" in sys.argv
+        or (sys.platform != "win32" and not os.environ.get("DISPLAY"))
+    )
+    if is_headless:
+        print("[JARVIS] 🌐 Headless Cloud environment detected (no GUI display). Starting Web Server...")
+        from run_cloud import run
+        run()
+        return
+
     ui = JarvisUI("face.png")
 
     def runner():
@@ -4376,4 +4391,5 @@ def main():
     ui.root.mainloop()
 
 if __name__ == "__main__":
+    main()
     main()
