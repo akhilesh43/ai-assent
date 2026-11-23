@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>JARVIS HUD MARK-LVI DASHBOARD</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    :root {
+      --bg: #030712;
+      --panel-bg: rgba(6, 18, 38, 0.75);
+      --panel-border: rgba(0, 229, 255, 0.35);
+      --glow-cyan: #00f3ff;
+      --glow-blue: #0077fe;
+      --dim-cyan: rgba(0, 243, 255, 0.15);
+      --text-bright: #e0f7fa;
+      --text-dim: #5c8ca6;
+      --accent-red: #ff3366;
+      --accent-green: #00ffaa;
+      --accent-amber: #ffaa00;
+    }
+    body, html {
+      width: 100%; height: 100%; overflow: hidden; background: var(--bg);
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      color: var(--text-bright);
+    }
+
+    /* Background futuristic grid & vignette */
+    .hud-bg {
+      position: fixed; inset: 0;
+      background: radial-gradient(circle at 50% 50%, rgba(0, 40, 80, 0.35) 0%, rgba(2, 6, 18, 0.95) 75%),
+                  linear-gradient(rgba(0, 243, 255, 0.03) 1px, transparent 1px),
+                  linear-gradient(90deg, rgba(0, 243, 255, 0.03) 1px, transparent 1px);
+      background-size: 100% 100%, 30px 30px, 30px 30px;
+      pointer-events: none; z-index: 1;
+    }
+
+    /* Overall Layout */
+    #hud-container {
+      position: relative; z-index: 2; width: 100vw; height: 100vh;
+      display: flex; flex-direction: column; padding: 12px 18px 10px;
+      gap: 12px;
+    }
+
+    /* ── TOP HEADER ── */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      height: 48px; border-bottom: 1px solid var(--panel-border);
+      background: rgba(3, 12, 28, 0.85); border-radius: 8px;
+      padding: 0 16px; box-shadow: 0 0 15px rgba(0, 243, 255, 0.1);
+    }
+    .hud-logo {
+      display: flex; align-items: baseline; gap: 8px;
+      font-size: 20px; font-weight: 900; letter-spacing: 5px; color: var(--glow-cyan);
+      text-shadow: 0 0 12px var(--glow-cyan);
+    }
+    .hud-logo span { font-size: 11px; font-weight: 600; color: var(--text-dim); letter-spacing: 2px; }
+    
+    .hud-nav-icons {
+      display: flex; gap: 16px; align-items: center;
+    }
+    .nav-btn {
+      background: transparent; border: none; color: var(--text-dim); font-size: 18px;
+      cursor: pointer; transition: all 0.2s; padding: 4px 8px; border-radius: 4px;
+    }
+    .nav-btn:hover, .nav-btn.active { color: var(--glow-cyan); text-shadow: 0 0 8px var(--glow-cyan); }
+
+    .hud-top-right {
+      display: flex; align-items: center; gap: 20px; font-family: monospace;
+    }
+    .clock-display { font-size: 18px; font-weight: 700; color: var(--glow-cyan); letter-spacing: 2px; }
+    .status-pill {
+      display: flex; align-items: center; gap: 6px; padding: 4px 10px;
+      border-radius: 12px; font-size: 11px; font-weight: 700;
+      background: rgba(0, 255, 170, 0.12); border: 1px solid rgba(0, 255, 170, 0.4); color: var(--accent-green);
+    }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
+
+    /* ── MAIN DASHBOARD GRID ── */
+    .dashboard-body {
+      flex: 1; display: grid; grid-template-columns: 280px 1fr 280px; gap: 14px; min-height: 0;
+    }
+
+    /* Common HUD Panel Styling */
+    .hud-panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex; flex-direction: column;
+      position: relative;
+      box-shadow: inset 0 0 20px rgba(0, 243, 255, 0.05), 0 4px 16px rgba(0,0,0,0.5);
+      backdrop-filter: blur(8px);
+    }
+    .hud-panel::before {
+      content: ''; position: absolute; top: -1px; left: 10px; right: 10px; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--glow-cyan), transparent);
+    }
+    .panel-title {
+      font-size: 11px; font-weight: 800; letter-spacing: 2px; color: var(--glow-cyan);
+      text-transform: uppercase; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;
+    }
+    .panel-title small { font-size: 9px; color: var(--text-dim); }
+
+    /* ── LEFT COLUMN ── */
+    .left-col { display: flex; flex-direction: column; gap: 12px; }
+    
+    /* Calendar Card */
+    .calendar-card {
+      display: flex; gap: 14px; align-items: center;
+    }
+    .cal-big-date {
+      font-size: 38px; font-weight: 900; color: var(--glow-cyan); line-height: 1;
+      text-align: center; border-right: 1px solid var(--panel-border); padding-right: 12px;
+    }
+    .cal-big-date small { display: block; font-size: 11px; font-weight: 700; color: var(--text-dim); letter-spacing: 1px; margin-top: 4px; }
+    .mini-calendar-grid {
+      flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; font-size: 9px; text-align: center; color: var(--text-dim);
+    }
+    .mini-calendar-grid span.active-day { color: #000; background: var(--glow-cyan); border-radius: 3px; font-weight: bold; }
+
+    /* System Stats Bars */
+    .stat-row { margin-bottom: 9px; }
+    .stat-lbl { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; margin-bottom: 3px; }
+    .stat-lbl span:first-child { color: var(--text-dim); }
+    .stat-bar-track { height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+    .stat-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--glow-blue), var(--glow-cyan)); transition: width 0.5s ease; }
+    .stat-bar-fill.warn { background: linear-gradient(90deg, #ffaa00, #ff3366); }
+
+    /* Network chart placeholder */
+    .sparkline-canvas { width: 100%; height: 42px; margin-top: 4px; }
+
+    /* ── CENTER COLUMN (ARC REACTOR / HOLO CORE) ── */
+    .center-col {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .reactor-container {
+      position: relative; width: 340px; height: 340px; display: flex; align-items: center; justify-content: center;
+    }
+    
+    /* Rotating HUD Rings */
+    .reactor-ring-outer {
+      position: absolute; width: 320px; height: 320px; border-radius: 50%;
+      border: 2px dashed rgba(0, 243, 255, 0.4);
+      animation: rotate-cw 25s linear infinite;
+    }
+    .reactor-ring-mid {
+      position: absolute; width: 270px; height: 270px; border-radius: 50%;
+      border: 2px solid transparent; border-top-color: var(--glow-cyan); border-bottom-color: var(--glow-cyan);
+      box-shadow: 0 0 25px rgba(0, 243, 255, 0.35);
+      animation: rotate-ccw 14s linear infinite;
+    }
+    .reactor-ring-inner {
+      position: absolute; width: 210px; height: 210px; border-radius: 50%;
+      border: 1px dotted rgba(0, 243, 255, 0.6);
+      animation: rotate-cw 8s linear infinite;
+    }
+    .reactor-core {
+      position: relative; width: 150px; height: 150px; border-radius: 50%;
+      background: radial-gradient(circle at 50% 50%, rgba(0, 243, 255, 0.45) 0%, rgba(0, 70, 140, 0.6) 55%, transparent 75%);
+      box-shadow: 0 0 50px rgba(0, 243, 255, 0.65), inset 0 0 20px rgba(255, 255, 255, 0.6);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      cursor: pointer; transition: transform 0.2s;
+    }
+    .reactor-core:hover { transform: scale(1.05); }
+    .reactor-core:active { transform: scale(0.97); }
+    .core-text { font-size: 22px; font-weight: 900; letter-spacing: 5px; color: #fff; text-shadow: 0 0 15px var(--glow-cyan); }
+    .core-subtext { font-size: 9px; letter-spacing: 3px; color: var(--glow-cyan); margin-top: 3px; opacity: 0.85; }
+
+    @keyframes rotate-cw { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes rotate-ccw { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }
+
+    /* Waveform Audio Visualizer */
+    .waveform-bar-wrap {
+      display: flex; gap: 4px; align-items: center; justify-content: center; height: 35px; width: 100%; margin-top: 15px;
+    }
+    .wave-line {
+      width: 4px; border-radius: 2px; background: var(--glow-cyan);
+      box-shadow: 0 0 6px var(--glow-cyan);
+      animation: wave-anim 1.2s ease-in-out infinite alternate;
+    }
+    @keyframes wave-anim { 0% { height: 6px; } 100% { height: 32px; } }
+
+    /* Quick Launch Bar (Chrome, VS Code, Spotify, Explorer, Terminal) */
+    .app-dock {
+      margin-top: 18px; display: flex; gap: 14px; background: rgba(6, 18, 38, 0.8);
+      border: 1px solid var(--panel-border); border-radius: 12px; padding: 8px 18px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+    }
+    .dock-icon {
+      font-size: 22px; cursor: pointer; transition: transform 0.15s; display: flex; align-items: center; justify-content: center;
+      width: 36px; height: 36px; border-radius: 8px; background: rgba(255,255,255,0.05);
+    }
+    .dock-icon:hover { transform: translateY(-4px) scale(1.15); background: var(--dim-cyan); text-shadow: 0 0 10px var(--glow-cyan); }
+
+    /* ── RIGHT COLUMN ── */
+    .right-col { display: flex; flex-direction: column; gap: 12px; }
+
+    /* Weather card */
+    .weather-box {
+      display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid rgba(0, 243, 255, 0.15);
+    }
+    .weather-temp { font-size: 28px; font-weight: 800; color: var(--text-bright); display: flex; align-items: center; gap: 8px; }
+    .weather-temp small { font-size: 13px; color: var(--text-dim); }
+    .weather-icon { font-size: 32px; color: var(--glow-cyan); }
+    .weather-forecast {
+      display: flex; justify-content: space-around; margin-top: 8px; font-size: 10px; color: var(--text-dim);
+    }
+    .forecast-item { text-align: center; }
+    .forecast-item div:first-child { font-weight: bold; color: var(--text-bright); margin-bottom: 2px; }
+
+    /* Tasks list */
+    .task-item {
+      font-size: 11px; padding: 6px 8px; border-radius: 6px; background: rgba(0, 243, 255, 0.05);
+      margin-bottom: 5px; border-left: 2px solid var(--glow-cyan); display: flex; justify-content: space-between; align-items: center;
+    }
+    .task-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+
+    /* Activity Feed */
+    .feed-container {
+      flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; font-size: 11px;
+      max-height: 180px; padding-right: 4px;
+    }
+    .feed-container::-webkit-scrollbar { width: 3px; }
+    .feed-container::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 2px; }
+    .feed-msg { padding: 5px 8px; border-radius: 6px; line-height: 1.4; }
+    .feed-msg.jarvis { background: var(--dim-cyan); border-left: 2px solid var(--glow-cyan); color: #c4f4fc; }
+    .feed-msg.user { background: rgba(255,255,255,0.04); border-left: 2px solid var(--text-dim); color: #fff; align-self: flex-end; }
+
+    /* ── BOTTOM COMMAND BAR ── */
+    footer {
+      display: flex; align-items: center; gap: 10px; height: 50px;
+      background: rgba(3, 12, 28, 0.85); border: 1px solid var(--panel-border);
+      border-radius: 10px; padding: 0 14px; box-shadow: 0 0 15px rgba(0, 243, 255, 0.1);
+    }
+    #cmd-input {
+      flex: 1; background: transparent; border: none; color: #fff; font-size: 14px; outline: none;
+      letter-spacing: 0.5px;
+    }
+    #cmd-input::placeholder { color: var(--text-dim); font-size: 12px; }
+    .hud-btn {
+      background: var(--dim-cyan); border: 1px solid var(--panel-border); color: var(--glow-cyan);
+      border-radius: 8px; padding: 8px 16px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .hud-btn:hover { background: var(--glow-cyan); color: #000; box-shadow: 0 0 12px var(--glow-cyan); }
+    .hud-btn:active { transform: scale(0.96); }
+
+    /* Quick status indicators */
+    .indicator-group {
+      display: flex; gap: 12px; font-size: 11px; font-weight: 600; color: var(--text-dim); align-items: center;
+    }
+    .indicator-badge {
+      display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+    }
+  </style>
+</head>
+<body>
+  <div class="hud-bg"></div>
+
+  <div id="hud-container">
+    <!-- TOP BAR -->
+    <header>
+      <div class="hud-logo">
+        JARVIS <span>MARK LVI</span>
+      </div>
+
+      <div class="hud-nav-icons">
+        <button class="nav-btn active" title="HUD Dashboard" onclick="location.reload()">📊</button>
+        <button class="nav-btn" title="Live Screen" onclick="location.href='/remote'">💻</button>
+        <button class="nav-btn" title="Phone Link Setup" onclick="location.href='/login'">📱</button>
+      </div>
+
+      <div class="hud-top-right">
+        <div class="status-pill">
+          <span class="status-dot"></span>
+          <span id="system-status-text">SYSTEM ONLINE</span>
+        </div>
+        <div class="clock-display" id="hud-clock">00:00:00</div>
+      </div>
+    </header>
+
+    <!-- DASHBOARD BODY -->
+    <div class="dashboard-body">
+      
+      <!-- LEFT COLUMN -->
+      <div class="left-col">
+        <!-- Date & Calendar -->
+        <div class="hud-panel">
+          <div class="panel-title">DATE & TIME <small id="cal-month-year">NOV 2026</small></div>
+          <div class="calendar-card">
+            <div class="cal-big-date" id="cal-day">20<small id="cal-weekday">FRI</small></div>
+            <div class="mini-calendar-grid" id="mini-calendar">
+              <!-- Dynamically generated days -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Hardware & Resource Monitor -->
+        <div class="hud-panel" style="flex: 1;">
+          <div class="panel-title">SYSTEM MONITOR <small id="process-count">230 PROCS</small></div>
+          
+          <div class="stat-row">
+            <div class="stat-lbl"><span>CPU LOAD</span><span id="cpu-val">0%</span></div>
+            <div class="stat-bar-track"><div class="stat-bar-fill" id="cpu-bar" style="width: 5%;"></div></div>
+          </div>
+
+          <div class="stat-row">
+            <div class="stat-lbl"><span>RAM USAGE</span><span id="ram-val">0 / 0 GB</span></div>
+            <div class="stat-bar-track"><div class="stat-bar-fill" id="ram-bar" style="width: 50%;"></div></div>
+          </div>
+
+          <div class="stat-row">
+            <div class="stat-lbl"><span>BATTERY LEVEL</span><span id="bat-val">100%</span></div>
+            <div class="stat-bar-track"><div class="stat-bar-fill" id="bat-bar" style="width: 100%;"></div></div>
+          </div>
+
+          <div class="stat-row">
+            <div class="stat-lbl"><span>DISK USAGE</span><span id="disk-val">0%</span></div>
+            <div class="stat-bar-track"><div class="stat-bar-fill" id="disk-bar" style="width: 45%;"></div></div>
+          </div>
+
+          <div class="panel-title" style="margin-top: 10px;">NETWORK ACTIVITY</div>
+          <canvas class="sparkline-canvas" id="net-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- CENTER COLUMN: ARC REACTOR HUD CORE -->
+      <div class="center-col">
+        <div class="reactor-container">
+          <div class="reactor-ring-outer"></div>
+          <div class="reactor-ring-mid"></div>
+          <div class="reactor-ring-inner"></div>
+          <div class="reactor-core" id="core-button" title="Click to trigger Voice Command">
+            <div class="core-text">JARVIS</div>
+            <div class="core-subtext">CORE ONLINE</div>
+          </div>
+        </div>
+
+        <!-- Audio visualizer waveform -->
+        <div class="waveform-bar-wrap" id="waveform">
+          <!-- Animated bars created dynamically -->
+        </div>
+
+        <!-- Quick Launch App Dock -->
+        <div class="app-dock">
+          <div class="dock-icon" title="Browser" onclick="sendQuickCommand('open chrome')">🌐</div>
+          <div class="dock-icon" title="Code Editor" onclick="sendQuickCommand('open vs code')">💻</div>
+          <div class="dock-icon" title="Music Player" onclick="sendQuickCommand('play music')">🎵</div>
+          <div class="dock-icon" title="File Explorer" onclick="sendQuickCommand('open explorer')">📁</div>
+          <div class="dock-icon" title="Terminal" onclick="sendQuickCommand('open terminal')">⚡</div>
+          <div class="dock-icon" title="Screen Remote" onclick="location.href='/remote'">📱</div>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN -->
+      <div class="right-col">
+        <!-- Weather & Climate -->
+        <div class="hud-panel">
+          <div class="panel-title">ENVIRONMENT / CLIMATE <small>LOCAL</small></div>
+          <div class="weather-box">
+            <div class="weather-temp">
+              <span id="weather-temp-num">24°C</span>
+              <small id="weather-desc">Clear Sky</small>
+            </div>
+            <div class="weather-icon" id="weather-icon-symbol">🌙</div>
+          </div>
+          <div class="weather-forecast">
+            <div class="forecast-item"><div>MORNING</div><div>21°C</div></div>
+            <div class="forecast-item"><div>AFTERNOON</div><div>28°C</div></div>
+            <div class="forecast-item"><div>NIGHT</div><div>19°C</div></div>
+          </div>
+        </div>
+
+        <!-- Active Tasks & Objectives -->
+        <div class="hud-panel">
+          <div class="panel-title">OBJECTIVES & TASKS <small id="tasks-count">2 ACTIVE</small></div>
+          <div id="tasks-container">
+            <div class="task-item"><span>Check system diagnostics</span><small>READY</small></div>
+            <div class="task-item"><span>Companion Phone Link</span><small>ACTIVE</small></div>
+          </div>
+        </div>
+
+        <!-- Live Activity Log -->
+        <div class="hud-panel" style="flex: 1;">
+          <div class="panel-title">TRANSMISSION FEED</div>
+          <div class="feed-container" id="feed-log">
+            <div class="feed-msg jarvis">JARVIS: All modules operational and standing by.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- BOTTOM COMMAND BAR -->
+    <footer>
+      <div class="indicator-group">
+        <div class="indicator-badge" id="host-badge">HOST: LOCAL</div>
+        <div class="indicator-badge">LINK: SECURE</div>
+      </div>
+      <input type="text" id="cmd-input" placeholder="Enter directive or speak command..." autocomplete="off">
+      <button class="hud-btn" id="btn-mic" onclick="toggleVoice()">🎤 VOICE</button>
+      <button class="hud-btn" id="btn-send" onclick="submitCommand()">TRANSMIT ↵</button>
+    </footer>
+  </div>
+
+  <script>
+    // ── Live Clock & Calendar ────────────────────────────────────────────────
+    function updateClock() {
+      const now = new Date();
+      const h = String(now.getHours()).padStart(2, '0');
+      const m = String(now.getMinutes()).padStart(2, '0');
+      const s = String(now.getSeconds()).padStart(2, '0');
+      document.getElementById('hud-clock').innerText = `${h}:${m}:${s}`;
+      
+      const weekdays = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+      const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+      document.getElementById('cal-day').innerHTML = `${now.getDate()}<small>${weekdays[now.getDay()]}</small>`;
+      document.getElementById('cal-month-year').innerText = `${months[now.getMonth()]} ${now.getFullYear()}`;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // Generate mini calendar days
+    function buildMiniCalendar() {
+      const grid = document.getElementById('mini-calendar');
+      grid.innerHTML = '';
+      const days = ['S','M','T','W','T','F','S'];
+      days.forEach(d => {
+        const span = document.createElement('span');
+        span.style.fontWeight = 'bold';
+        span.innerText = d;
+        grid.appendChild(span);
+      });
+      const now = new Date();
+      const today = now.getDate();
+      for (let i = 1; i <= 28; i++) {
+        const span = document.createElement('span');
+        span.innerText = i;
+        if (i === today) span.className = 'active-day';
+        grid.appendChild(span);
+      }
+    }
+    buildMiniCalendar();
+
+    // Generate waveform visualizer bars
+    const waveWrap = document.getElementById('waveform');
+    for (let i = 0; i < 28; i++) {
+      const bar = document.createElement('div');
+      bar.className = 'wave-line';
+      bar.style.animationDelay = (i * 0.08) + 's';
+      waveWrap.appendChild(bar);
+    }
+
+    // Sparkline Canvas for network simulation
+    const canvas = document.getElementById('net-canvas');
+    if (canvas) {
+      canvas.width = canvas.parentElement.clientWidth || 250;
+      canvas.height = 42;
+      const ctx = canvas.getContext('2d');
+      const points = Array.from({length: 30}, () => Math.random() * 30 + 5);
+      function drawNet() {
+        points.shift();
+        points.push(Math.random() * 30 + 5);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#00f3ff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        const step = canvas.width / (points.length - 1);
+        points.forEach((p, idx) => {
+          const x = idx * step;
+          const y = canvas.height - p;
+          if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+      setInterval(drawNet, 800);
+    }
+
+    // ── Live System Insights Polling ─────────────────────────────────────────
+    async function fetchInsights() {
+      try {
+        const res = await fetch('/api/insights');
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        // System stats
+        if (data.system) {
+          const cpu = Math.round(data.system.cpu || 0);
+          const mem = Math.round(data.system.mem || 0);
+          const memUsed = data.system.mem_used_gb || 0;
+          const memTot = data.system.mem_total_gb || 8;
+          const bat = Math.round(data.system.battery || 100);
+          const disk = Math.round(data.system.disk || 45);
+          const procs = data.system.processes || 200;
+
+          document.getElementById('cpu-val').innerText = `${cpu}%`;
+          document.getElementById('cpu-bar').style.width = `${Math.max(5, cpu)}%`;
+          
+          document.getElementById('ram-val').innerText = `${memUsed} / ${memTot} GB (${mem}% )`;
+          document.getElementById('ram-bar').style.width = `${Math.max(5, mem)}%`;
+          
+          document.getElementById('bat-val').innerText = `${bat}%`;
+          document.getElementById('bat-bar').style.width = `${bat}%`;
+
+          document.getElementById('disk-val').innerText = `${disk}%`;
+          document.getElementById('disk-bar').style.width = `${disk}%`;
+
+          document.getElementById('process-count').innerText = `${procs} PROCS`;
+        }
+
+        // Tasks
+        if (data.tasks && data.tasks.open !== undefined) {
+          document.getElementById('tasks-count').innerText = `${data.tasks.open} ACTIVE`;
+        }
+      } catch (_) {}
+    }
+    fetchInsights();
+    setInterval(fetchInsights, 4000);
+
+    // ── Command Transmit ─────────────────────────────────────────────────────
+    async function submitCommand() {
+      const inp = document.getElementById('cmd-input');
+      const val = inp.value.trim();
+      if (!val) return;
+      inp.value = '';
+
+      addFeedMsg('user', val);
+
+      try {
+        const res = await fetch('/api/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: val })
+        });
+        if (res.ok) {
+          addFeedMsg('jarvis', 'Directive transmitted to core processor.');
+        }
+      } catch (err) {
+        addFeedMsg('jarvis', 'Transmission error: ' + err);
+      }
+    }
+
+    function sendQuickCommand(cmd) {
+      document.getElementById('cmd-input').value = cmd;
+      submitCommand();
+    }
+
+    function addFeedMsg(type, text) {
+      const feed = document.getElementById('feed-log');
+      const div = document.createElement('div');
+      div.className = `feed-msg ${type}`;
+      div.innerText = (type === 'user' ? 'YOU: ' : 'JARVIS: ') + text;
+      feed.appendChild(div);
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    document.getElementById('cmd-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitCommand();
+    });
+
+    document.getElementById('core-button').addEventListener('click', () => {
+      sendQuickCommand('system status');
+    });
+
+    function toggleVoice() {
+      addFeedMsg('jarvis', 'Voice input channel listening...');
+      sendQuickCommand('wake');
+    }
+  </script>
+</body>
+</html>
+
