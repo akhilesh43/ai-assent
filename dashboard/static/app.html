@@ -877,6 +877,9 @@
       </div>
 
       <div class="header-right">
+        <button id="gemini-key-pill" onclick="openBrainStage()" style="display:none; background:rgba(255,51,102,0.15); border:1px solid #ff3366; color:#ff3366; font-size:10px; font-weight:bold; padding:4px 8px; border-radius:12px; cursor:pointer; letter-spacing:1px;">
+          ⚠️ ENTER GEMINI KEY
+        </button>
         <div class="status-pill">
           <span class="status-dot"></span>
           <span id="st-pill-text">SYSTEM ONLINE</span>
@@ -923,15 +926,12 @@
       </div>
 
       <div class="drawer-section-title">SYSTEM PANELS & TOOLS</div>
+      <button class="drawer-btn" onclick="openBrainStage()" style="border-color: #00ffaa; color: #00ffaa;">🔑 ENTER GEMINI API KEY <span>▸</span></button>
       <button class="drawer-btn" onclick="openAssistantsDeck()" style="border-color: #ff3366; color: #ff3366;">🤖 AI ASSISTANTS & CREATOR DECK <span>▸</span></button>
-      <button class="drawer-btn" onclick="dispatchBridge('openProviders')">🔑 GEMINI API KEY & PROVIDERS <span>▸</span></button>
-      <button class="drawer-btn" onclick="dispatchBridge('openAudioDevices')">🎧 AUDIO DEVICES & MIC <span>▸</span></button>
+      <button class="drawer-btn" onclick="openBrainStage()">✨ ADVANCED AI CONFIG (260ms Latency) <span>▸</span></button>
+      <button class="drawer-btn" onclick="switchTab('overview')">▦ SYSTEM OVERVIEW & TELEMETRY <span>▸</span></button>
+      <button class="drawer-btn" onclick="switchTab('tasks')">☑ BACKGROUND TASKS & AGENTS <span>▸</span></button>
       <button class="drawer-btn" onclick="switchTab('phone')">📱 PHONE LINK & QR PAIR <span>▸</span></button>
-      <button class="drawer-btn" onclick="dispatchBridge('openAISettings')">✨ ADVANCED AI CONFIG (260ms Latency) <span>▸</span></button>
-      <button class="drawer-btn" onclick="dispatchBridge('openVoiceLock')">🎙 VOICE LOCK & WAKE WORD <span>▸</span></button>
-      <button class="drawer-btn" onclick="dispatchBridge('openMemory')">🧠 MEMORY & KNOWLEDGE STORE <span>▸</span></button>
-      <button class="drawer-btn" onclick="dispatchBridge('openPlugins')">🧩 PLUGIN MANAGER <span>▸</span></button>
-      <button class="drawer-btn" onclick="dispatchBridge('openCustomize')">🎨 THEME PALETTE & UI WHEEL <span>▸</span></button>
     </div>
 
     <!-- CYBER FLOATING CONTROLS DRAWER -->
@@ -1759,6 +1759,7 @@
       initQtWebBridge();
       initAvatarChromaEngine();
       setTimeout(initWebDashboardSocket, 500);
+      setTimeout(checkGeminiKeyStatus, 800);
     }
 
     if (document.readyState === 'loading') {
@@ -1773,13 +1774,34 @@
       const activeBtn = document.getElementById(`tab-${tabKey}`);
       if (activeBtn) activeBtn.classList.add('active');
 
+      if (tabKey === 'hud') {
+        closeDynamicStage();
+        switchLeftPanel('systems');
+        return;
+      }
       if (tabKey === 'assistants') {
         openAssistantsDeck();
         return;
       }
-
       if (tabKey === 'tasks') {
-        switchLeftPanel('tasks');
+        openTasksStage();
+        return;
+      }
+      if (tabKey === 'overview') {
+        openOverviewStage();
+        return;
+      }
+      if (tabKey === 'brain') {
+        openBrainStage();
+        return;
+      }
+      if (tabKey === 'mind') {
+        openMindStage();
+        return;
+      }
+      if (tabKey === 'phone') {
+        openPhoneStage();
+        return;
       }
 
       if (qtBridge && qtBridge.switchWorkspaceTab) {
@@ -1791,6 +1813,245 @@
           body: JSON.stringify({ text: `open ${tabKey}` })
         }).catch(() => {});
       }
+    }
+
+    async function checkGeminiKeyStatus() {
+      try {
+        const res = await authFetch('/api/config/keys');
+        if (res.ok) {
+          const data = await res.json();
+          updateGeminiBadge(data.has_gemini, data.gemini_masked);
+        }
+      } catch (_) {}
+    }
+
+    function updateGeminiBadge(hasKey, masked = '') {
+      const pill = document.getElementById('gemini-key-pill');
+      if (!pill) return;
+      if (!hasKey) {
+        pill.style.display = 'inline-block';
+        pill.innerText = '⚠️ ENTER GEMINI KEY';
+        pill.style.borderColor = '#ff3366';
+        pill.style.color = '#ff3366';
+        pill.style.background = 'rgba(255,51,102,0.15)';
+      } else {
+        pill.style.display = 'inline-block';
+        pill.innerText = '🟢 GEMINI ONLINE';
+        pill.style.borderColor = '#00ffaa';
+        pill.style.color = '#00ffaa';
+        pill.style.background = 'rgba(0,255,170,0.1)';
+      }
+    }
+
+    async function openBrainStage() {
+      const s = document.getElementById('cyber-settings-drawer');
+      if (s) s.style.display = 'none';
+
+      openDynamicStage('◈ NEURAL BRAIN // GOOGLE GEMINI API CONFIGURATION');
+      const area = document.getElementById('stage-content-area');
+      area.innerHTML = '<div style="color: var(--glow-cyan); font-size: 11px;">Checking neural brain status…</div>';
+      
+      let keyData = { has_gemini: false, gemini_masked: '' };
+      try {
+        const res = await authFetch('/api/config/keys');
+        if (res.ok) keyData = await res.json();
+      } catch (e) {}
+
+      const statusBadge = keyData.has_gemini 
+        ? `<span style="color:#00ffaa; font-weight:bold;">● ONLINE (${keyData.gemini_masked || 'Active'})</span>`
+        : `<span style="color:#ff3366; font-weight:bold;">● KEY MISSING (Offline)</span>`;
+
+      area.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:12px; font-size:12px; line-height:1.6;">
+          <div style="background:rgba(0,243,255,0.06); border:1px solid var(--panel-border); padding:12px; border-radius:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <div style="font-weight:bold; color:var(--text-bright); letter-spacing:1px;">⚡ GEMINI NEURAL ENGINE STATUS:</div>
+              <div>${statusBadge}</div>
+            </div>
+            <div style="font-size:11px; color:var(--text-dim);">
+              JARVIS Mark-LVI uses Google Gemini (Gemini 2.5 Flash / Gemini 3.1 Flash) for instant multi-modal intelligence, coding, and voice interaction.
+            </div>
+          </div>
+
+          <div style="background:rgba(6,19,38,0.9); border:1px solid var(--panel-border); padding:14px; border-radius:8px;">
+            <div style="font-size:11px; font-weight:bold; color:var(--glow-cyan); letter-spacing:1px; margin-bottom:6px;">
+              🔑 ENTER / UPDATE GOOGLE GEMINI API KEY
+            </div>
+            <div style="font-size:10px; color:var(--text-dim); margin-bottom:10px;">
+              Get your free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--glow-cyan); text-decoration:underline;">Google AI Studio (aistudio.google.com)</a>
+            </div>
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+              <input type="password" id="gemini-key-input" class="drawer-input" placeholder="Paste your AIzaSy... key here" style="flex:1; padding:8px 12px; font-size:12px; font-family:monospace;">
+              <button class="stage-btn" onclick="saveGeminiKeyAction()" style="white-space:nowrap; padding:8px 16px;">💾 SAVE KEY</button>
+            </div>
+            <div id="key-save-msg" style="font-size:11px; min-height:16px;"></div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div style="background:rgba(0,13,24,0.6); border:1px solid rgba(0,243,255,0.2); padding:10px; border-radius:6px;">
+              <div style="font-size:10px; color:var(--glow-cyan); font-weight:bold;">MODELS IN ROTATION</div>
+              <div style="font-size:11px; color:var(--text-dim); margin-top:4px;">• Gemini 2.5 Flash<br>• Gemini 3.1 Flash Live<br>• ElevenLabs TTS Engine</div>
+            </div>
+            <div style="background:rgba(0,13,24,0.6); border:1px solid rgba(0,243,255,0.2); padding:10px; border-radius:6px;">
+              <div style="font-size:10px; color:var(--glow-cyan); font-weight:bold;">SERVER DEPLOYMENT</div>
+              <div style="font-size:11px; color:var(--text-dim); margin-top:4px;">• Cloud Web Hosting (Render)<br>• Latency: ~18ms<br>• Real-time Streaming: Enabled</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    async function saveGeminiKeyAction() {
+      const inp = document.getElementById('gemini-key-input');
+      const msg = document.getElementById('key-save-msg');
+      const val = (inp.value || '').trim();
+      if (!val) {
+        msg.style.color = '#ff3366';
+        msg.innerText = 'Please enter a valid Gemini API key (starts with AIzaSy...).';
+        return;
+      }
+      msg.style.color = 'var(--glow-cyan)';
+      msg.innerText = 'Validating and saving API key…';
+      try {
+        const res = await authFetch('/api/config/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gemini_api_key: val })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          msg.style.color = '#00ffaa';
+          msg.innerText = '✓ Gemini API Key successfully saved and activated!';
+          inp.value = '';
+          appendLog('sys', 'SYS: Gemini Neural Engine online.');
+          updateGeminiBadge(true);
+          setTimeout(openBrainStage, 1500);
+        } else {
+          msg.style.color = '#ff3366';
+          msg.innerText = 'Error: ' + (data.error || 'Failed to save key');
+        }
+      } catch (err) {
+        msg.style.color = '#ff3366';
+        msg.innerText = 'Network error: ' + err.message;
+      }
+    }
+
+    function openOverviewStage() {
+      openDynamicStage('▦ SYSTEM OVERVIEW // TELEMETRY & STATUS');
+      const area = document.getElementById('stage-content-area');
+      area.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:12px; font-size:11px;">
+          <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
+            <div style="background:rgba(0,243,255,0.06); border:1px solid var(--panel-border); padding:12px; border-radius:8px; text-align:center;">
+              <div style="font-size:10px; color:var(--text-dim);">SYSTEM CORE</div>
+              <div style="font-size:18px; font-weight:bold; color:var(--glow-cyan); margin:4px 0;">MARK-LVI</div>
+              <div style="color:#00ffaa; font-size:10px;">● NOMINAL</div>
+            </div>
+            <div style="background:rgba(0,243,255,0.06); border:1px solid var(--panel-border); padding:12px; border-radius:8px; text-align:center;">
+              <div style="font-size:10px; color:var(--text-dim);">AVATAR ENGINE</div>
+              <div style="font-size:18px; font-weight:bold; color:var(--glow-cyan); margin:4px 0;">ALPHA WEBP</div>
+              <div style="color:#00ffaa; font-size:10px;">● ZERO-GLITCH CACHE</div>
+            </div>
+            <div style="background:rgba(0,243,255,0.06); border:1px solid var(--panel-border); padding:12px; border-radius:8px; text-align:center;">
+              <div style="font-size:10px; color:var(--text-dim);">NEURAL LATENCY</div>
+              <div style="font-size:18px; font-weight:bold; color:var(--glow-cyan); margin:4px 0;">18 ms</div>
+              <div style="color:#00ffaa; font-size:10px;">● ULTRA FAST</div>
+            </div>
+          </div>
+
+          <div style="background:rgba(6,19,38,0.9); border:1px solid var(--panel-border); padding:12px; border-radius:8px;">
+            <div style="font-weight:bold; color:var(--glow-cyan); margin-bottom:8px;">ACTIVE SUBSYSTEMS</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-family:monospace; font-size:10px;">
+              <div>• Neural Speech: ElevenLabs / Gemini</div>
+              <div>• Real-time Audio Stream: PCM 24kHz</div>
+              <div>• Chroma Matrix: WebP Transparent DOM</div>
+              <div>• Command Router: Asynchronous Queue</div>
+              <div>• Session Storage: Cloud Authenticated</div>
+              <div>• Dynamic Hud Stage: Active</div>
+            </div>
+          </div>
+          <div style="display:flex; justify-content:flex-end;">
+            <button class="stage-btn" onclick="renderBarGraphWidget()">📊 VIEW LIVE METRICS GRAPH</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function openMindStage() {
+      openDynamicStage('☺ MIND MATRIX // PERSONA & EMOTIONAL REASONING');
+      const area = document.getElementById('stage-content-area');
+      area.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:12px; font-size:11px;">
+          <div style="background:rgba(0,243,255,0.06); border:1px solid var(--panel-border); padding:12px; border-radius:8px;">
+            <div style="font-weight:bold; color:var(--text-bright); margin-bottom:4px;">NEURAL ATTITUDE & TONE</div>
+            <div style="color:var(--text-dim);">Adaptive conversational awareness, contextual memory retention, and proactive problem solving.</div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div style="background:rgba(6,19,38,0.9); border:1px solid var(--panel-border); padding:10px; border-radius:8px;">
+              <div style="color:var(--glow-cyan); font-weight:bold; margin-bottom:4px;">CURRENT EMOTION: ENGAGED</div>
+              <div style="color:var(--text-dim);">Avatar visually mirrors speaking, listening, and thinking cycles dynamically.</div>
+            </div>
+            <div style="background:rgba(6,19,38,0.9); border:1px solid var(--panel-border); padding:10px; border-radius:8px;">
+              <div style="color:var(--glow-cyan); font-weight:bold; margin-bottom:4px;">MULTI-AGENT REASONING</div>
+              <div style="color:var(--text-dim);">Switch personas (JARVIS, FRIDAY, EDITH, SHANVI) with custom tones and voices.</div>
+            </div>
+          </div>
+          <button class="stage-btn" onclick="openAssistantsDeck()">🤖 SWITCH ASSISTANT PERSONA</button>
+        </div>
+      `;
+    }
+
+    function openPhoneStage() {
+      openDynamicStage('📱 PHONE LINK & QR PAIRING');
+      const area = document.getElementById('stage-content-area');
+      area.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:12px; font-size:11px; align-items:center; text-align:center;">
+          <div style="font-size:13px; font-weight:bold; color:var(--glow-cyan);">CONNECT MOBILE COMPANION</div>
+          <div style="color:var(--text-dim); max-width:400px;">
+            Scan to open JARVIS on your mobile browser or enter session key on your phone.
+          </div>
+          <div style="background:#fff; padding:12px; border-radius:12px; margin:8px 0;">
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(location.origin + '/hud')}" alt="QR" style="display:block; width:150px; height:150px;">
+          </div>
+          <div style="font-size:11px; color:var(--text-bright); font-family:monospace;">
+            URL: <a href="${location.origin}/hud" target="_blank" style="color:var(--glow-cyan);">${location.origin}/hud</a>
+          </div>
+        </div>
+      `;
+    }
+
+    function openTasksStage() {
+      switchLeftPanel('tasks');
+      openDynamicStage('☑ BACKGROUND TASKS & AGENTS');
+      const area = document.getElementById('stage-content-area');
+      area.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:10px; font-size:11px;">
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="modal-task-inp" class="drawer-input" placeholder="Type new background task or goal..." style="flex:1; padding:8px 12px;">
+            <button class="stage-btn" onclick="addModalTask()">+ ADD TASK</button>
+          </div>
+          <div id="modal-tasks-list" style="background:rgba(6,19,38,0.9); border:1px solid var(--panel-border); padding:12px; border-radius:8px; min-height:120px; display:flex; flex-direction:column; gap:6px;">
+            <div style="color:var(--text-dim);">No tasks running. Use input above to schedule tasks.</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function addModalTask() {
+      const inp = document.getElementById('modal-task-inp');
+      const val = (inp.value || '').trim();
+      if (!val) return;
+      inp.value = '';
+      const list = document.getElementById('modal-tasks-list');
+      const item = document.createElement('div');
+      item.className = 'task-card-mini';
+      item.innerHTML = `<span>• ${val}</span><span class="task-badge-status">RUNNING</span>`;
+      list.appendChild(item);
+      authFetch('/api/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: `task: ${val}` })
+      }).catch(() => {});
     }
 
     // ── Left Panel Switcher: SYSTEMS vs TASKS (Image 1 & 2) ──────────────────

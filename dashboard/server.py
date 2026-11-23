@@ -925,11 +925,15 @@ class DashboardServer:
         try:
             await self.broadcast({"type": "state", "state": "thinking"})
             reply = ""
-            try:
-                from core import gemini
-                reply = await asyncio.to_thread(gemini.text, text)
-            except Exception:
-                reply = f"JARVIS Cloud Engine online. Received directive: '{text}'."
+            from core import gemini
+            k = gemini.api_key()
+            if not k:
+                reply = "⚠️ Google Gemini API key configure nahi hai! Kripya Settings Drawer -> 'Advanced AI Config' me jakar apna Gemini API key enter karein ya Render ke Environment Variables me 'GEMINI_API_KEY' set karein."
+            else:
+                try:
+                    reply = await asyncio.to_thread(gemini.text, text)
+                except Exception as e:
+                    reply = f"AI Error: {e}"
             if not reply:
                 reply = f"Acknowledged: '{text}'."
 
@@ -1657,6 +1661,50 @@ class DashboardServer:
                 return JSONResponse({"ok": True, "voice": voice})
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
+
+        @app.get("/api/config/keys")
+        async def get_keys_config(req: Request):
+            from core import gemini
+            k = gemini.api_key()
+            masked = f"{k[:6]}...{k[-4:]}" if len(k) > 10 else ("Configured" if k else "")
+            return JSONResponse({
+                "has_gemini": bool(k),
+                "gemini_masked": masked,
+                "cloud_mode": IS_CLOUD
+            })
+
+        @app.post("/api/config/keys")
+        async def save_keys_config(req: Request):
+            try:
+                body = await req.json()
+                key = str(body.get("gemini_api_key") or "").strip()
+                if not key:
+                    return JSONResponse({"ok": False, "error": "Gemini API key is required"}, status_code=400)
+                
+                os.environ["GEMINI_API_KEY"] = key
+                cfg_path = BASE_DIR / "config" / "api_keys.json"
+                cfg_data = {}
+                try:
+                    if cfg_path.exists():
+                        cfg_data = json.loads(cfg_path.read_text(encoding="utf-8"))
+                except Exception:
+                    cfg_data = {}
+                cfg_data["gemini_api_key"] = key
+                cfg_path.parent.mkdir(parents=True, exist_ok=True)
+                cfg_path.write_text(json.dumps(cfg_data, indent=2), encoding="utf-8")
+
+                from core import gemini
+                gemini.api_key(refresh=True)
+
+                await self.broadcast({
+                    "type": "log",
+                    "speaker": "sys",
+                    "text": "SYS: Google Gemini API key updated successfully! Neural brain is now online.",
+                    "ts": time.strftime("%H:%M:%S")
+                })
+                return JSONResponse({"ok": True, "message": "Google Gemini API key saved successfully!"})
+            except Exception as err:
+                return JSONResponse({"ok": False, "error": str(err)}, status_code=500)
 
         @app.websocket("/ws")
         async def ws_ep(websocket: WebSocket, token: str = ""):
