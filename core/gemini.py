@@ -66,7 +66,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import sys
 import time
@@ -324,19 +323,14 @@ def _cooling(model: str) -> bool:
 
 
 def api_key(refresh: bool = False) -> str:
-    """The Gemini key from config/api_keys.json or GEMINI_API_KEY env. Cached; never raises."""
+    """The Gemini key from config/api_keys.json. Cached; never raises."""
     global _cached_key
     with _key_lock:
         if _cached_key is not None and not refresh:
             return _cached_key
-        # Check environment variables first (critical for Render / cloud deployment)
-        env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GEMINI_KEY") or ""
-        if env_key and env_key.strip():
-            _cached_key = env_key.strip()
-            return _cached_key
         try:
             data = json.loads(_KEY_FILE.read_text(encoding="utf-8"))
-            _cached_key = str(data.get("gemini_api_key") or "").strip()
+            _cached_key = str(data.get("gemini_api_key") or "")
         except Exception:
             _cached_key = ""
         return _cached_key

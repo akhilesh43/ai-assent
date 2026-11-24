@@ -204,7 +204,6 @@
       if (data.ok && data.token) {
         sessionStorage.setItem('jarvis_key', key);
         sessionStorage.setItem('jarvis_token', data.token);
-        localStorage.setItem('jarvis_token', data.token);
         location.href = '/';
       } else {
         inp.value = '';

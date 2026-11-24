@@ -13,7 +13,6 @@ import asyncio
 import base64
 import hashlib
 import json
-import os
 import re
 import secrets
 import socket
@@ -21,8 +20,6 @@ import string
 import threading
 import time
 from pathlib import Path
-
-IS_CLOUD = bool(os.environ.get("RENDER") or os.environ.get("PORT") or os.environ.get("CLOUD_MODE"))
 
 _DEPS_OK = False
 try:
@@ -920,62 +917,6 @@ class DashboardServer:
                 dead.add(ws)
         self._clients -= dead
 
-    def _call_gemini_models(self, prompt: str, key: str) -> str:
-        """Query official Gemini models in sequence with graceful fallback."""
-        from google import genai
-        cl = genai.Client(api_key=key)
-        models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash", "gemini-1.5-pro"]
-        last_exc = None
-        system_instruction = (
-            "You are JARVIS / FRIDAY, a highly intelligent, charismatic, and loyal AI assistant. "
-            "Respond helpfully, concisely, and naturally in the same language as the user (Hindi, Hinglish, or English)."
-        )
-        for m in models:
-            try:
-                resp = cl.models.generate_content(
-                    model=m,
-                    contents=f"{system_instruction}\n\nUser: {prompt}"
-                )
-                if resp and resp.text and resp.text.strip():
-                    return resp.text.strip()
-            except Exception as e:
-                last_exc = e
-                continue
-        raise RuntimeError(f"All Gemini models failed: {last_exc}")
-
-    async def _reset_avatar_after(self, delay: float) -> None:
-        await asyncio.sleep(delay)
-        await self.broadcast({"type": "state", "state": "listening"})
-
-    async def _process_cloud_command(self, text: str) -> str:
-        """Handle command directly when running in headless / cloud mode without desktop GUI."""
-        try:
-            await self.broadcast({"type": "state", "state": "thinking"})
-            from core import gemini
-            k = gemini.api_key()
-            if not k:
-                reply = "⚠️ Google Gemini API key configure nahi hai! Kripya Settings Drawer -> 'Advanced AI Config' me jakar apna Gemini API key enter karein ya Render ke Environment Variables me 'GEMINI_API_KEY' set karein."
-            else:
-                reply = await asyncio.to_thread(self._call_gemini_models, text, k)
-
-            if not reply:
-                reply = f"JARVIS Cloud Engine: Received directive '{text}'."
-
-            await self.broadcast({"type": "state", "state": "talking"})
-            await self.broadcast({
-                "type": "log",
-                "speaker": "jarvis",
-                "text": reply,
-                "ts": time.strftime("%H:%M:%S")
-            })
-            asyncio.create_task(self._reset_avatar_after(max(2.0, min(len(reply) * 0.05, 6.0))))
-            return reply
-        except Exception as exc:
-            err_msg = f"AI Error: {exc}"
-            await self.broadcast({"type": "log", "speaker": "sys", "text": err_msg, "ts": time.strftime("%H:%M:%S")})
-            await self.broadcast({"type": "state", "state": "listening"})
-            return err_msg
-
     # ── FastAPI app ───────────────────────────────────────────────────────
 
     def _build_app(self) -> "FastAPI":
@@ -986,12 +927,8 @@ class DashboardServer:
             which keeps the sweep free and needs no background timer."""
             if not tok:
                 return False
-            if tok in ("cloud_session", "dev_master"):
-                return True
             issued = self._tokens.get(tok)
             if issued is None:
-                if IS_CLOUD and not os.environ.get("DASHBOARD_PIN"):
-                    return True
                 return False
             if time.time() - issued > _TOKEN_TTL_SECONDS:
                 self._tokens.pop(tok, None)
@@ -1003,24 +940,8 @@ class DashboardServer:
             host = getattr(getattr(req, "client", None), "host", "")
             if host in ("127.0.0.1", "::1", "localhost", "testclient"):
                 return True
-            auth_token = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
-            if auth_token and _valid(auth_token):
-                return True
-            cookie_tok = req.cookies.get("jarvis_token", "").strip()
-            if cookie_tok and _valid(cookie_tok):
-                return True
-            param_tok = req.query_params.get("token", "").strip()
-            if param_tok and _valid(param_tok):
-                return True
-            pin = os.environ.get("DASHBOARD_PIN", "").strip()
-            if pin:
-                if auth_token == pin or cookie_tok == pin or param_tok == pin:
-                    return True
-                return False
-            # In cloud or web deployments where no explicit PIN is enforced, allow requests
-            if IS_CLOUD or True:
-                return True
-            return False
+            return _valid(req.headers.get("authorization", "")
+                          .removeprefix("Bearer ").strip())
 
         def _who(req: Request) -> str:
             """The client address a throttle counts against."""
@@ -1039,23 +960,21 @@ class DashboardServer:
         async def hud_page(token: str = ""):
             hud_path = STATIC_DIR / "hud_dashboard.html"
             content = hud_path.read_text(encoding="utf-8") if hud_path.exists() else self._app_html
-            tok = token.strip() or "cloud_session"
-            inject = f"<script>try{{sessionStorage.setItem('jarvis_token','{tok}');localStorage.setItem('jarvis_token','{tok}');}}catch(e){{}}</script>"
-            content = content.replace("<head>", f"<head>{inject}", 1)
-            resp = HTMLResponse(content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
-            resp.set_cookie("jarvis_token", tok, max_age=86400 * 30, httponly=False, samesite="lax")
-            return resp
+            tok = token.strip()
+            if tok and _valid(tok):
+                inject = f"<script>try{{sessionStorage.setItem('jarvis_token','{tok}');}}catch(e){{}}</script>"
+                content = content.replace("<head>", f"<head>{inject}", 1)
+            return HTMLResponse(content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
         @app.get("/dashboard", response_class=HTMLResponse)
         async def dashboard_page(token: str = ""):
             hud_path = STATIC_DIR / "hud_dashboard.html"
             content = hud_path.read_text(encoding="utf-8") if hud_path.exists() else self._app_html
-            tok = token.strip() or "cloud_session"
-            inject = f"<script>try{{sessionStorage.setItem('jarvis_token','{tok}');localStorage.setItem('jarvis_token','{tok}');}}catch(e){{}}</script>"
-            content = content.replace("<head>", f"<head>{inject}", 1)
-            resp = HTMLResponse(content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
-            resp.set_cookie("jarvis_token", tok, max_age=86400 * 30, httponly=False, samesite="lax")
-            return resp
+            tok = token.strip()
+            if tok and _valid(tok):
+                inject = f"<script>try{{sessionStorage.setItem('jarvis_token','{tok}');}}catch(e){{}}</script>"
+                content = content.replace("<head>", f"<head>{inject}", 1)
+            return HTMLResponse(content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
         @app.get("/videos/{filename}")
         async def get_video(filename: str):
@@ -1064,20 +983,8 @@ class DashboardServer:
             if not p.exists():
                 p = STATIC_DIR / safe
             if not p.exists() or not p.is_file():
-                return JSONResponse({"error": "File not found"}, status_code=404)
-            ext = p.suffix.lower()
-            mime = "image/webp" if ext == ".webp" else ("image/png" if ext == ".png" else ("image/jpeg" if ext in (".jpg", ".jpeg") else "video/mp4"))
-            return FileResponse(str(p), media_type=mime)
-
-        @app.get("/{filename}.webp")
-        async def get_root_webp(filename: str):
-            safe = re.sub(r'[/\\]', '', filename) + ".webp"
-            p = STATIC_DIR / "videos" / safe
-            if not p.exists():
-                p = STATIC_DIR / safe
-            if not p.exists() or not p.is_file():
-                return JSONResponse({"error": "File not found"}, status_code=404)
-            return FileResponse(str(p), media_type="image/webp")
+                return JSONResponse({"error": "Video not found"}, status_code=404)
+            return FileResponse(str(p), media_type="video/mp4")
 
         @app.get("/{filename}.mp4")
         async def get_root_video(filename: str):
@@ -1094,23 +1001,23 @@ class DashboardServer:
             app_file = STATIC_DIR / "app.html"
             raw = app_file.read_text(encoding="utf-8") if app_file.exists() else self._app_html
             html = raw.replace("__IP__", self._ip).replace("__PORT__", str(self._primary_port))
-            tok = token.strip() or "cloud_session"
-            inject = f"<script>try{{sessionStorage.setItem('jarvis_token','{tok}');localStorage.setItem('jarvis_token','{tok}');}}catch(e){{}}</script>"
-            html = html.replace("<head>", f"<head>{inject}", 1)
-            resp = HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
-            resp.set_cookie("jarvis_token", tok, max_age=86400 * 30, httponly=False, samesite="lax")
-            return resp
+            tok = token.strip()
+            if tok and _valid(tok):
+                inject = f"<script>try{{sessionStorage.setItem('jarvis_token','{tok}');}}catch(e){{}}</script>"
+                html = html.replace("<head>", f"<head>{inject}", 1)
+            return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
         @app.get("/", response_class=HTMLResponse)
-        async def index(token: str = ""):
-            hud_path = STATIC_DIR / "hud_dashboard.html"
-            content = hud_path.read_text(encoding="utf-8") if hud_path.exists() else self._app_html
-            tok = token.strip() or "cloud_session"
-            inject = f"<script>try{{sessionStorage.setItem('jarvis_token','{tok}');localStorage.setItem('jarvis_token','{tok}');}}catch(e){{}}</script>"
-            content = content.replace("<head>", f"<head>{inject}", 1)
-            resp = HTMLResponse(content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
-            resp.set_cookie("jarvis_token", tok, max_age=86400 * 30, httponly=False, samesite="lax")
-            return resp
+        async def index():
+            # Auth is handled client-side via sessionStorage bearer token.
+            # Server-side header auth can't work here because browser navigations
+            # don't send custom headers (location.href doesn't carry Authorization).
+            app_file = STATIC_DIR / "app.html"
+            raw = app_file.read_text(encoding="utf-8") if app_file.exists() else self._app_html
+            html = (raw
+                    .replace("__IP__", self._ip)
+                    .replace("__PORT__", str(PORT)))
+            return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
         @app.post("/login")
         async def login(req: Request):
@@ -1129,21 +1036,19 @@ class DashboardServer:
             body    = await req.json()
             entered = str(body.get("pin", "")).strip().upper()
             now     = time.time()
-            expected_pin = os.environ.get("DASHBOARD_PIN", "").strip().upper()
-            if (entered in self._pending_keys and self._pending_keys[entered] > now) or (expected_pin and entered == expected_pin) or (IS_CLOUD and not expected_pin):
+            if entered in self._pending_keys and self._pending_keys[entered] > now:
                 self._throttle.clear(who)
-                if entered in self._pending_keys:
-                    del self._pending_keys[entered]          # one-time use
+                del self._pending_keys[entered]          # one-time use
                 tok = secrets.token_urlsafe(32)
                 self._tokens[tok] = time.time()
-                self._token_keys[tok] = entered or "CLOUD"
-                if entered:
-                    self._aes_key(entered)                   # pre-derive & cache
+                self._token_keys[tok] = entered
+                self._aes_key(entered)                   # pre-derive & cache
                 if self._connect_callback:
                     self._connect_callback()
                 asyncio.create_task(self.broadcast(
                     {"type": "sys", "text": "Remote connection established."}
                 ))
+                # Bearer token in response body — no cookies needed (works on any browser/HTTP)
                 return JSONResponse({"ok": True, "token": tok})
             self._throttle.record_failure(who)
             return JSONResponse({"ok": False, "error": "Invalid or expired key"},
@@ -1272,7 +1177,6 @@ class DashboardServer:
                     return JSONResponse({"error": "Decryption failed"}, status_code=400)
             else:
                 text = (body.get("text") or "").strip()
-            reply = ""
             if text:
                 await self.broadcast({
                     "type": "log",
@@ -1283,9 +1187,7 @@ class DashboardServer:
                 await self._command_queue.put(text)
                 if self._wake_callback:
                     self._wake_callback()
-                else:
-                    reply = await self._process_cloud_command(text)
-            return JSONResponse({"ok": True, "reply": reply or ""})
+            return JSONResponse({"ok": True})
 
         @app.post("/api/wake")
         async def wake_ep(req: Request):
@@ -1699,50 +1601,6 @@ class DashboardServer:
                 return JSONResponse({"ok": True, "voice": voice})
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
-
-        @app.get("/api/config/keys")
-        async def get_keys_config(req: Request):
-            from core import gemini
-            k = gemini.api_key()
-            masked = f"{k[:6]}...{k[-4:]}" if len(k) > 10 else ("Configured" if k else "")
-            return JSONResponse({
-                "has_gemini": bool(k),
-                "gemini_masked": masked,
-                "cloud_mode": IS_CLOUD
-            })
-
-        @app.post("/api/config/keys")
-        async def save_keys_config(req: Request):
-            try:
-                body = await req.json()
-                key = str(body.get("gemini_api_key") or "").strip()
-                if not key:
-                    return JSONResponse({"ok": False, "error": "Gemini API key is required"}, status_code=400)
-                
-                os.environ["GEMINI_API_KEY"] = key
-                cfg_path = BASE_DIR / "config" / "api_keys.json"
-                cfg_data = {}
-                try:
-                    if cfg_path.exists():
-                        cfg_data = json.loads(cfg_path.read_text(encoding="utf-8"))
-                except Exception:
-                    cfg_data = {}
-                cfg_data["gemini_api_key"] = key
-                cfg_path.parent.mkdir(parents=True, exist_ok=True)
-                cfg_path.write_text(json.dumps(cfg_data, indent=2), encoding="utf-8")
-
-                from core import gemini
-                gemini.api_key(refresh=True)
-
-                await self.broadcast({
-                    "type": "log",
-                    "speaker": "sys",
-                    "text": "SYS: Google Gemini API key updated successfully! Neural brain is now online.",
-                    "ts": time.strftime("%H:%M:%S")
-                })
-                return JSONResponse({"ok": True, "message": "Google Gemini API key saved successfully!"})
-            except Exception as err:
-                return JSONResponse({"ok": False, "error": str(err)}, status_code=500)
 
         @app.websocket("/ws")
         async def ws_ep(websocket: WebSocket, token: str = ""):
